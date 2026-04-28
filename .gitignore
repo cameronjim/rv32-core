@@ -1,0 +1,39 @@
+# simulation output
+*.vvp
+*.vcd
+*.fst
+sim/build/
+
+# program build output
+programs/build/
+*.elf
+*.o
+*.bin
+
+# quartus generated files
+quartus/db/
+quartus/incremental_db/
+quartus/output_files/
+quartus/simulation/
+quartus/greybox_tmp/
+quartus/.qsys_edit/
+quartus/hps_isw_handoff/
+*.qws
+*.rpt
+*.summary
+*.smsg
+*.jdi
+*.pin
+*.sld
+*.done
+*.sof
+*.pof
+*.qar
+*.qarlog
+c5_pin_model_dump.txt
+
+# editor and os cruft
+.vscode/
+*.swp
+Thumbs.db
+.DS_Store
