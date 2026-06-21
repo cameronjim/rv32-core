@@ -246,11 +246,66 @@ synthesizable mmio block in phase 4 implements the same map.
 Software conventions (linker layout, crt0, build flow, sim vs hardware
 builds) live in claude-docs/software.md.
 
+## Modules (phase 4)
+
+### mmio (rtl/mmio.sv)
+
+Synthesizable, board-agnostic implementation of the MMIO register map. The
+behavioral tb/lib/mmio_sim.sv is its reference model; both implement the same
+map and the mmio testbench cross-checks them against each other.
+
+Ports: clk, rst_n; bus side addr (32), wdata (32), we, re, rdata (32,
+combinational read like dmem so loads stay single cycle); peripheral side
+sw_in (10), key_in (4, already synchronized and normalized so 1 means
+pressed), ledr_out (10), hex0_out..hex5_out (7 each, active high).
+
+LEDR and HEX0..HEX5 are read/write registers, reset to 0. SW and KEY reads
+reflect the inputs. CYCLE is a free-running counter, 0 at reset. Unmapped
+reads return 0, unmapped writes are ignored. External decode gates we/re, so
+the block does not check addr[31:16] itself; it decodes addr[15:0] only.
+
+### de1_soc_top (rtl/de1_soc_top.sv)
+
+The board top. Ports use the DE1-SoC pin names exactly as the qsf assigns
+them (CLOCK_50, KEY, SW, LEDR, HEX0..HEX5); this is the one sanctioned
+exception to snake_case port naming, so the pin assignment file lines up with
+the board documentation.
+
+- Every KEY and SW input passes through a two flip-flop synchronizer.
+- Reset: KEY[3] is the system reset button. The board keys are active low, so
+  the synchronized KEY[3] drives rst_n directly (pressed pulls it low).
+- mmio key_in = {1'b0, inverted synchronized KEY[2:0]}: bits 2:0 read 1 when
+  pressed, bit 3 always reads 0 because that button is the reset. The
+  software doc carries the same note. reaction.c polls bit 0, which is KEY0.
+- HEX displays on the board are active low, so each hexN port drives the
+  inverse of the mmio register (segments lit where the register bit is 1).
+- Instantiates cpu_top, imem, dmem, mmio with the same address decode as
+  tb/demo_tb.sv: dmem when addr[31:12] == 20'h00001, mmio when addr[31:16] ==
+  16'hFFFF.
+- Parameters IMEM_INIT and DMEM_INIT choose the synthesized program, default
+  programs/hex/switch_mirror.hex and its data hex (switch_mirror has no
+  delay constants, so the committed sim flavor behaves identically on the
+  board).
+
+### de1_soc_tb (tb/de1_soc_tb.sv)
+
+Board-level simulation: loads switch_mirror, releases reset through KEY[3],
+drives SW patterns, and checks LEDR pins follow and HEX pins carry the
+active-low inverse of the expected digit patterns. Also checks reset
+re-assertion mid-run restarts the program cleanly.
+
+## Quartus project (quartus/)
+
+Hand-written project files, no wizard output: rv32_core.qpf, rv32_core.qsf
+(device 5CSEMA5F31C6, top level de1_soc_top, the rtl file list, and pin plus
+IO standard assignments for CLOCK_50, KEY, SW, LEDR, HEX0..HEX5 taken from
+the DE1-SoC documentation), and rv32_core.sdc (50 MHz create_clock on
+CLOCK_50, false paths on the synchronized inputs and the LED and HEX
+outputs). Synthesis itself waits on the Quartus Prime Lite 23.1std install.
+
 ## Deferred to later phases
 
-- Synthesizable mmio block, board top, pin assignments, Quartus project (phase 4)
-- Reaction timer demo needs buttons on real hardware to be interesting; a
-  simulation-only version ships in phase 3 (phase 4 wires it to the board)
+- Synthesis, timing closure, programming the board (needs Quartus installed)
 - Pipeline registers, hazards, forwarding (phase 5)
 
 ## Testing strategy
