@@ -159,14 +159,22 @@ content, which is exactly how programs get preloaded at synthesis time.
 
 ### dmem (rtl/dmem.sv)
 
-Data memory, word addressed with per-byte write lanes, asynchronous read.
-Unlike imem, the read port cannot be registered in the single-cycle core:
-the load address is the ALU result, which only settles after imem hands the
-instruction over at the falling edge, so there is no clock edge left before
-writeback. Registering it was tried at first synthesis and made every load
-return the previous instruction's word. Until the phase 5 pipeline gives
-loads their own MEM stage, dmem synthesizes to registers or MLABs instead of
-M10K, and that cost is accepted and documented here.
+Data memory, word addressed with per-byte write lanes, synchronous read:
+the read address is captured on the rising edge and rdata holds the addressed
+word for the following cycle (standard M10K simple dual port shape). Writes
+commit on the rising edge; a read capturing the same address on the same edge
+returns the old word, which is fine because the core never needs same-edge
+read-after-write (the load stall below separates them by a full cycle).
+
+Hardware bring-up history, kept because each step taught something: a fully
+asynchronous read synthesized to 33904 registers plus a 17000 LE read mux and
+the fitter could not route it. Registering the read on the falling edge like
+imem broke loads, because the load address is the ALU result and only settles
+after imem hands the instruction over mid-cycle. Steering the array into
+MLABs with a ramstyle attribute was silently ignored: Cyclone V MLABs also
+require a registered read address, so this family simply has no
+asynchronous-read memory. The synchronous read plus a one cycle load stall in
+cpu_top is the correct and final shape.
 Parameters ADDR_WIDTH (default 10), DATA_WIDTH (32), INIT_FILE (optional
 $readmemh preload, later useful for .data sections). Ports: `clk`, `addr`
 (word index), `wdata`, `byte_en` (4 bit), `we`, `rdata`. Writes happen on
@@ -215,6 +223,14 @@ Internals:
 - writeback mux per wb_sel: alu_result, lsu load_data, or pc_plus4
 - dmem_addr = alu_result, dmem_we = mem_write, dmem_re = mem_read, byte
   enables and wdata from the lsu store path
+- load stall: dmem reads are synchronous (data arrives the cycle after the
+  address), so a load occupies two cycles. A load_wait flag makes the first
+  load cycle hold the PC and suppress reg_write; the second cycle writes back
+  the captured read data and releases the PC. The fetched instruction does
+  not change while the PC holds, so decode and the ALU address stay stable.
+  Every other instruction, including stores and mmio reads, is one cycle
+  (mmio rdata is combinational but simply gets sampled a cycle late through
+  the same uniform two cycle load path)
 
 ### cpu_top_tb (tb/cpu_top_tb.sv)
 

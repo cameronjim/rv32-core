@@ -274,7 +274,8 @@ module demo_tb;
   endtask
 
   // counter: HEX4 and HEX5 go dark once, then a four write burst per count
-  // with the BCD digits carried by hand, measured near 73 cycles apart
+  // with the BCD digits carried by hand, measured 82 cycles apart (73 before
+  // the load stall; the delay loop reloads its counter from memory)
   task automatic check_counter();
     logic [6:0] exp0[11];
 
@@ -307,7 +308,7 @@ module demo_tb;
   endtask
 
   // switch_mirror: SW lands on LEDR and its three hex digits on HEX0..HEX2,
-  // refreshed roughly every 34 cycles
+  // refreshed roughly every 38 cycles (34 before the load stall)
   task automatic check_switch_mirror();
     int deadline;
 
@@ -371,7 +372,10 @@ module demo_tb;
   endtask
 
   // memtest: walking ones then an address pattern over the dmem window at
-  // 0x1800, LEDR reporting each phase and then the pass code
+  // 0x1800, LEDR reporting each phase and then the pass code. The phase 2 and
+  // pass windows were re-measured after the load stall landed: this demo is
+  // load heavy, so phase 2 moved from cycle 1605 to 1861 and the pass code
+  // from 1680 to 1944. The windows below are centered on the new numbers.
   task automatic check_memtest();
     start_demo("memtest");
     while (cyc < 2500) step_cycles(1);
@@ -380,9 +384,9 @@ module demo_tb;
     expect_hex("LEDR phase 1 code", ledr_val[0], 10'h001);
     expect_range("LEDR phase 1 cycle", ledr_cyc[0], 5, 60);
     expect_hex("LEDR phase 2 code", ledr_val[1], 10'h002);
-    expect_range("LEDR phase 2 cycle", ledr_cyc[1], 1200, 2100);
+    expect_range("LEDR phase 2 cycle", ledr_cyc[1], 1500, 2200);
     expect_hex("LEDR pass code", ledr_val[2], 10'h3FF);
-    expect_range("LEDR pass cycle", ledr_cyc[2], 1200, 2200);
+    expect_range("LEDR pass cycle", ledr_cyc[2], 1600, 2300);
     expect_hex("LEDR still passing at 2500", mmio_ledr, 10'h3FF);
 
     // MEMTEST_WORDS is 8 in the simulation build, shown as two hex digits
