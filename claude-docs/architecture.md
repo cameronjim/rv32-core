@@ -139,22 +139,34 @@ there is no trap machinery.
 
 ### imem (rtl/imem.sv)
 
-Instruction memory, word addressed, asynchronous read. Parameters ADDR_WIDTH
-(word index width, default 10) and INIT_FILE (hex file loaded with $readmemh
-when nonempty). Ports: `addr` (word index), `rdata` (32 bit). Read only.
+Instruction memory, word addressed, read only. Parameters ADDR_WIDTH (word
+index width, default 10) and INIT_FILE (hex file loaded with $readmemh when
+nonempty). Ports: `clk`, `addr` (word index), `rdata` (32 bit).
+
+The read port is registered on the NEGATIVE clock edge. The core presents the
+address combinationally after each rising edge, the memory captures it at the
+falling edge, and rdata is stable before the next rising edge, so the core
+still fetches and executes in one full cycle. This registered read is what
+lets Quartus infer M10K block RAM; a fully asynchronous read synthesized to
+tens of thousands of registers and a giant read mux (learned the hard way at
+first synthesis: 33904 registers, 0 block memory bits). The cost is that the
+memory path gets half a clock period instead of a full one, which is fine at
+50 MHz.
 
 Initialization uses an `initial $readmemh` block. This is the one sanctioned
 use of `initial` in synthesizable code: Quartus honors it as block RAM initial
 content, which is exactly how programs get preloaded at synthesis time.
 
-Note on synthesis: asynchronous read keeps the core single cycle but means
-Quartus will not infer M10K block RAM (M10K needs a registered read address).
-Small memories land in MLABs or logic instead. Acceptable at this size;
-revisit at hardware bring-up if resource usage hurts.
-
 ### dmem (rtl/dmem.sv)
 
 Data memory, word addressed with per-byte write lanes, asynchronous read.
+Unlike imem, the read port cannot be registered in the single-cycle core:
+the load address is the ALU result, which only settles after imem hands the
+instruction over at the falling edge, so there is no clock edge left before
+writeback. Registering it was tried at first synthesis and made every load
+return the previous instruction's word. Until the phase 5 pipeline gives
+loads their own MEM stage, dmem synthesizes to registers or MLABs instead of
+M10K, and that cost is accepted and documented here.
 Parameters ADDR_WIDTH (default 10), DATA_WIDTH (32), INIT_FILE (optional
 $readmemh preload, later useful for .data sections). Ports: `clk`, `addr`
 (word index), `wdata`, `byte_en` (4 bit), `we`, `rdata`. Writes happen on

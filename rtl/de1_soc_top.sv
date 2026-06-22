@@ -128,6 +128,7 @@ module de1_soc_top #(
     .ADDR_WIDTH (MEM_ADDR_WIDTH),
     .INIT_FILE  (IMEM_INIT)
   ) u_imem (
+    .clk   (clk),
     .addr  (imem_word_addr),
     .rdata (imem_rdata)
   );

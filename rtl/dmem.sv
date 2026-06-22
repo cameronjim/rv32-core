@@ -1,6 +1,6 @@
-// dmem: data memory, word addressed with one write enable per byte lane and
-// an asynchronous read port. Writes land on posedge clk for every enabled
-// lane; reads return the whole word and leave lane extraction to the lsu.
+// dmem: data memory, word addressed with one write enable per byte lane and an
+// asynchronous read port. Writes land on posedge clk for every enabled lane;
+// reads return the whole word and leave lane extraction to the lsu.
 
 module dmem #(
   parameter int ADDR_WIDTH = 10,
@@ -33,6 +33,18 @@ module dmem #(
     end
   end
 
+  // The read stays asynchronous, unlike imem. imem can register its read on the
+  // negative edge because its address is the pc, a register output that is
+  // stable from the rising edge onward. This address is alu_result, which only
+  // settles after imem hands the instruction over at the falling edge, so there
+  // is no clock edge left between the address being valid and the writeback at
+  // the next rising edge. Registering this port would make every load return
+  // the word addressed by the previous instruction. Giving loads their own
+  // clock edge is a cpu_top change (a load stall, or the pipelined MEM stage),
+  // so until then this memory costs registers instead of M10K bits.
+  //
+  // Store then load ordering: a write commits on the rising edge, so a load in
+  // any later cycle sees the stored data.
   assign rdata = mem[addr];
 
   // No rst_n here: block RAM contents cannot be cleared by a reset signal, so
