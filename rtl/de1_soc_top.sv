@@ -1,6 +1,7 @@
 // de1_soc_top: DE1-SoC board top. Wraps cpu_top with imem, dmem and mmio,
 // synchronizes the board inputs, and fixes the pin polarities the board wants.
 // The program that gets synthesized comes from IMEM_INIT and DMEM_INIT.
+// Everything below the divider runs on cpu_clk, CLOCK_50 halved to 25 MHz.
 
 module de1_soc_top #(
   parameter string IMEM_INIT = "programs/hex/switch_mirror.hex",
@@ -31,7 +32,8 @@ module de1_soc_top #(
   localparam logic [19:0] DMEM_BASE_TAG = 20'h00001;
   localparam logic [15:0] MMIO_BASE_TAG = 16'hFFFF;
 
-  logic clk;
+  logic cpu_clk_div = 1'b0;
+  logic cpu_clk;
   logic rst_n;
 
   logic [KEY_WIDTH-1:0] key_meta;
@@ -66,12 +68,27 @@ module de1_soc_top #(
   logic [6:0]           mmio_hex4;
   logic [6:0]           mmio_hex5;
 
-  assign clk = CLOCK_50;
+  // Divide by two clock. The whole CPU domain runs at 25 MHz because timing
+  // analysis put the single-cycle core's Fmax at 29 MHz: imem read, decode,
+  // register read, ALU and next-pc selection all share one cycle, and that
+  // chain does not fit in 20 ns. That is the single-cycle architecture's
+  // honest cost, not a bug, and the phase 5 pipeline is the path back to 50.
+  // The toggle register has no reset for the same reason the synchronizers
+  // below have none: there is nothing upstream to reset it with, and either
+  // power-up value works because only the edges matter. The declared initial
+  // value is the Cyclone V power-up state and keeps simulation defined.
+  always_ff @(posedge CLOCK_50) begin
+    cpu_clk_div <= ~cpu_clk_div;
+  end
 
-  // Two flip flop synchronizers on every asynchronous board input. These have
-  // no reset: rst_n is derived from this chain, so there is nothing to reset
-  // them with. They settle after two clocks from power-up.
-  always_ff @(posedge clk) begin
+  assign cpu_clk = cpu_clk_div;
+
+  // Two flip flop synchronizers on every asynchronous board input. They run on
+  // cpu_clk, not CLOCK_50, so everything downstream of the divider stays in a
+  // single clock domain. These have no reset: rst_n is derived from this
+  // chain, so there is nothing to reset them with. They settle after two
+  // cpu_clk edges from power-up.
+  always_ff @(posedge cpu_clk) begin
     key_meta <= KEY;
     key_sync <= key_meta;
     sw_meta  <= SW;
@@ -112,7 +129,7 @@ module de1_soc_top #(
     .DATA_WIDTH   (DATA_WIDTH),
     .RESET_VECTOR (32'h0000_0000)
   ) u_cpu (
-    .clk        (clk),
+    .clk        (cpu_clk),
     .rst_n      (rst_n),
     .imem_addr  (imem_addr),
     .imem_rdata (imem_rdata),
@@ -128,7 +145,7 @@ module de1_soc_top #(
     .ADDR_WIDTH (MEM_ADDR_WIDTH),
     .INIT_FILE  (IMEM_INIT)
   ) u_imem (
-    .clk   (clk),
+    .clk   (cpu_clk),
     .addr  (imem_word_addr),
     .rdata (imem_rdata)
   );
@@ -138,7 +155,7 @@ module de1_soc_top #(
     .DATA_WIDTH (DATA_WIDTH),
     .INIT_FILE  (DMEM_INIT)
   ) u_dmem (
-    .clk     (clk),
+    .clk     (cpu_clk),
     .addr    (dmem_word_addr),
     .wdata   (dmem_wdata),
     .byte_en (dmem_be),
@@ -149,7 +166,7 @@ module de1_soc_top #(
   mmio #(
     .DATA_WIDTH (DATA_WIDTH)
   ) u_mmio (
-    .clk      (clk),
+    .clk      (cpu_clk),
     .rst_n    (rst_n),
     .addr     (dmem_addr),
     .wdata    (dmem_wdata),

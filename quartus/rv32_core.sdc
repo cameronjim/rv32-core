@@ -1,8 +1,16 @@
 # rv32_core.sdc: timing constraints for the rv32-core DE1-SoC build.
-# One 50 MHz clock, and false paths on the asynchronous board pins so the
-# switches, buttons, LEDs and displays do not have to meet timing.
+# The 50 MHz board clock, the 25 MHz CPU clock derived from it, and false paths
+# on the asynchronous board pins so the switches, buttons, LEDs and displays do
+# not have to meet timing.
 
 create_clock -name CLOCK_50 -period 20.000 [get_ports CLOCK_50]
+
+# The CPU domain runs at 25 MHz off the cpu_clk_div toggle register in
+# de1_soc_top. The single-cycle core closed timing at only 29 MHz, so the
+# divider buys the margin; the phase 5 pipeline is the path back to 50 MHz.
+# Without this generated clock the divided domain would be unconstrained.
+create_generated_clock -source [get_ports CLOCK_50] -divide_by 2 \
+    -name cpu_clk [get_registers {cpu_clk_div}]
 
 derive_clock_uncertainty
 

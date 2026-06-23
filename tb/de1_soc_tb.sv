@@ -17,9 +17,16 @@ module de1_soc_tb;
   localparam logic [SEG_WIDTH-1:0] SEG_A = 7'h77;
   localparam logic [SEG_WIDTH-1:0] SEG_BLANK = 7'h00;
 
+  // Every budget below counts CLOCK_50 cycles, which is what step_cycles
+  // advances. de1_soc_top divides CLOCK_50 by two, so the CPU only steps on
+  // every other one and each budget is twice what the work actually needs.
+
   // how long switch_mirror may take to pick up a new switch value
-  localparam int MIRROR_BUDGET = 800;
-  localparam int RESET_CYCLES  = 6;
+  localparam int MIRROR_BUDGET = 1600;
+  // six cpu_clk cycles of reset held
+  localparam int RESET_CYCLES  = 12;
+  // two cpu_clk cycles after reset is released
+  localparam int RELEASE_CYCLES = 4;
 
   logic       CLOCK_50;
   logic [3:0] KEY;
@@ -117,7 +124,7 @@ module de1_soc_tb;
     expect_pin("LEDR while reset held", LEDR, 10'h000);
     expect_pin("pc while reset held", u_dut.u_cpu.pc, 32'h0000_0000);
     KEY[3] = 1'b1;
-    step_cycles(2);
+    step_cycles(RELEASE_CYCLES);
   endtask
 
   initial begin
@@ -129,7 +136,7 @@ module de1_soc_tb;
     SW     = 10'h000;
 
     // power-on reset. The synchronizer flops start unknown, so the first two
-    // cycles carry X on rst_n; holding KEY3 down settles them.
+    // cpu_clk edges carry X on rst_n; holding KEY3 down settles them.
     pulse_reset();
 
     SW = 10'h2A5;

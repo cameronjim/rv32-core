@@ -314,6 +314,15 @@ the board documentation.
   programs/hex/switch_mirror.hex and its data hex (switch_mirror has no
   delay constants, so the committed sim flavor behaves identically on the
   board).
+- Clocking: the CPU domain runs at 25 MHz, CLOCK_50 divided by two through a
+  toggle register (cpu_clk). First timing analysis put the single-cycle
+  core's Fmax at 29 MHz: the imem read, decode, register read, ALU and
+  next-pc selection all share one cycle, and that chain is about 34 ns of
+  logic. That is the single-cycle architecture's honest cost, not a bug; the
+  phase 5 pipeline is what buys the clock rate back. The sdc declares
+  cpu_clk with create_generated_clock -divide_by 2 so timing signs off at
+  the real operating frequency. Software cycle constants (config.h) use
+  25 MHz.
 
 ### de1_soc_tb (tb/de1_soc_tb.sv)
 
