@@ -56,7 +56,7 @@ RISCV_PREFIX ?= C:/Users/CJ/opt/xpack-riscv-none-elf-gcc-15.2.0-1/bin/riscv-none
 PYTHON       ?= python
 
 PROG_DIR  := tb/programs
-PROGRAMS  := arith mem branch
+PROGRAMS  := arith mem branch pipeline
 PROG_HEX  := $(addprefix $(PROG_DIR)/,$(addsuffix .hex,$(PROGRAMS)))
 
 .PHONY: tb-programs

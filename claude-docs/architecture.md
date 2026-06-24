@@ -364,8 +364,11 @@ Stage assignment and how the synchronous memories fold in:
   next cycle. No separate instr flop, no negedge trick. A 1-bit flush flag
   registered alongside makes ID treat the incoming instruction as a NOP when
   the previous cycle redirected (BRAM output cannot be cleared directly).
-  On a stall the PC holds, so the BRAM re-reads the same address and the
-  instruction naturally persists.
+  On a stall the fetch address switches to the IF/ID pc rather than the PC:
+  the PC already points one past the stalled instruction, so a frozen PC
+  would re-fetch the wrong word and silently drop the stalled instruction
+  (found the hard way; the mem program's lb caught it). The BRAM re-reads
+  the stalled instruction's address until the stall clears.
 - ID: decode (control), register file read, WB-to-ID bypass, imm_gen.
 - EX: forwarding muxes, ALU, branch_cmp, branch/jal target adder, all
   control flow resolution (branch, jal, jalr redirect from here; static
@@ -373,7 +376,15 @@ Stage assignment and how the synchronous memories fold in:
 - MEM: the dmem access cycle. The EX/MEM register launches the address and
   the existing synchronous dmem (unchanged from phase 4) captures it on that
   edge; load data lands exactly at the MEM/WB boundary. The lsu store path
-  sits in EX/MEM, the load extension path in WB off the captured word.
+  sits in EX/MEM, the load extension path in WB off the arriving word.
+  Structural rule: a load owns the external data bus for two cycles, MEM and
+  WB, because the read data only exists during WB and the external decode
+  (which cannot be replicated inside the core) resolves it off the live bus
+  address. The hazard logic inserts one bubble when a memory instruction
+  immediately follows a load, exactly like a load-use stall. Isolated loads
+  stay CPI 1; only adjacent memory operations pay. This also means mmio
+  reads need no capture register: the bus holds still while the value is
+  consumed.
 - WB: writeback mux to the register file.
 
 Pipeline registers and their flush/stall behavior:
@@ -385,8 +396,10 @@ Pipeline registers and their flush/stall behavior:
   zeroed) on load-use stall or EX redirect.
 - EX/MEM: alu_result, forwarded store data, rd, funct3, pc_plus4, control
   (reg_write, wb_sel, mem_read, mem_write).
-- MEM/WB: alu_result, captured load word, pc_plus4, rd, funct3, reg_write,
-  wb_sel.
+- MEM/WB: alu_result, pc_plus4, rd, funct3, addr_lo, reg_write, wb_sel. The
+  load word itself is not registered here: it arrives on the bus during WB
+  (dmem's output register, or mmio's combinational read held stable by the
+  bus rule above).
 - The cpu_top load_wait stall from phase 4 is deleted; the MEM stage
   supersedes it.
 
@@ -407,9 +420,10 @@ Hazard handling, in two new leaf modules with their own testbenches:
 
 The register file, ALU, imm_gen, branch_cmp, control, lsu, dmem and mmio are
 unchanged; imem changes read edge only. x0 never forwards (rd == 0 never
-matches). jalr uses the forwarded rs1 in EX. mmio loads flow through the MEM
-stage like dmem loads (mmio rdata is combinational, sampled into MEM/WB at
-the same edge). Interrupts, exceptions and CSRs remain out of scope.
+matches). jalr uses the forwarded rs1 in EX. The back end (EX/MEM, bus,
+MEM/WB, writeback, both lsu instances) lives in its own module,
+mem_wb_stage, to respect the 400 line rule; cpu_top keeps the front end.
+Interrupts, exceptions and CSRs remain out of scope.
 
 ## Deferred to later phases
 
