@@ -1,0 +1,8 @@
+# rv32_core.qpf: Quartus project file for the rv32-core DE1-SoC build.
+# Hand written, no wizard output. Settings live in rv32_core.qsf.
+
+QUARTUS_VERSION = "23.1"
+
+# Revisions
+
+PROJECT_REVISION = "rv32_core"

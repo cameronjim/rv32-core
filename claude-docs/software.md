@@ -3,6 +3,9 @@
 How programs for the CPU are built and what they can assume. Fixed in phase 3;
 the mmio addresses come from the register map in architecture.md.
 
+On hardware, KEY bit 3 always reads 0: KEY3 is the system reset button (see
+de1_soc_top in architecture.md). Programs should poll KEY0..KEY2 only.
+
 ## Memory layout (programs/common/link.ld)
 
 | section                          | placement                               |

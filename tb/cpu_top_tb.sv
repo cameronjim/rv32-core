@@ -10,6 +10,8 @@ module cpu_top_tb;
   localparam int BE_WIDTH       = DATA_WIDTH / 8;
   localparam int MEM_ADDR_WIDTH = 10;
   localparam int NUM_WORDS      = 1 << MEM_ADDR_WIDTH;
+  // Generous: the longest program (mem) finishes in 57 cycles even with every
+  // load costing two of them.
   localparam int CYCLE_BUDGET   = 2000;
 
   // done convention: the magic word lands in the last dmem word, 0x00001FFC
@@ -63,6 +65,7 @@ module cpu_top_tb;
     .ADDR_WIDTH (MEM_ADDR_WIDTH),
     .INIT_FILE  ("")
   ) u_imem (
+    .clk   (clk),
     .addr  (imem_addr[MEM_ADDR_WIDTH+1:2]),
     .rdata (imem_rdata)
   );
