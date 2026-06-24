@@ -1,7 +1,7 @@
 // de1_soc_top: DE1-SoC board top. Wraps cpu_top with imem, dmem and mmio,
 // synchronizes the board inputs, and fixes the pin polarities the board wants.
 // The program that gets synthesized comes from IMEM_INIT and DMEM_INIT.
-// Everything below the divider runs on cpu_clk, CLOCK_50 halved to 25 MHz.
+// Everything runs on CLOCK_50 directly: the pipeline closes timing at 50 MHz.
 
 module de1_soc_top #(
   parameter string IMEM_INIT = "programs/hex/switch_mirror.hex",
@@ -32,7 +32,6 @@ module de1_soc_top #(
   localparam logic [19:0] DMEM_BASE_TAG = 20'h00001;
   localparam logic [15:0] MMIO_BASE_TAG = 16'hFFFF;
 
-  logic cpu_clk_div = 1'b0;
   logic cpu_clk;
   logic rst_n;
 
@@ -68,26 +67,19 @@ module de1_soc_top #(
   logic [6:0]           mmio_hex4;
   logic [6:0]           mmio_hex5;
 
-  // Divide by two clock. The whole CPU domain runs at 25 MHz because timing
-  // analysis put the single-cycle core's Fmax at 29 MHz: imem read, decode,
-  // register read, ALU and next-pc selection all share one cycle, and that
-  // chain does not fit in 20 ns. That is the single-cycle architecture's
-  // honest cost, not a bug, and the phase 5 pipeline is the path back to 50.
-  // The toggle register has no reset for the same reason the synchronizers
-  // below have none: there is nothing upstream to reset it with, and either
-  // power-up value works because only the edges matter. The declared initial
-  // value is the Cyclone V power-up state and keeps simulation defined.
-  always_ff @(posedge CLOCK_50) begin
-    cpu_clk_div <= ~cpu_clk_div;
-  end
+  // The CPU domain is CLOCK_50 itself. The divide by two register that used to
+  // sit here existed because the single-cycle core's Fmax was 29 MHz: imem
+  // read, decode, register read, ALU and next-pc selection all shared one
+  // cycle, and that chain did not fit in 20 ns. The five stage pipeline splits
+  // that chain across five cycles, so no single stage needs anything close to
+  // 20 ns and the whole design clocks straight off the board oscillator. The
+  // alias below keeps the instance port connections reading as a CPU clock.
+  assign cpu_clk = CLOCK_50;
 
-  assign cpu_clk = cpu_clk_div;
-
-  // Two flip flop synchronizers on every asynchronous board input. They run on
-  // cpu_clk, not CLOCK_50, so everything downstream of the divider stays in a
-  // single clock domain. These have no reset: rst_n is derived from this
-  // chain, so there is nothing to reset them with. They settle after two
-  // cpu_clk edges from power-up.
+  // Two flip flop synchronizers on every asynchronous board input. The whole
+  // design is one clock domain now, so these run on the same clock as the CPU.
+  // These have no reset: rst_n is derived from this chain, so there is nothing
+  // to reset them with. They settle after two cpu_clk edges from power-up.
   always_ff @(posedge cpu_clk) begin
     key_meta <= KEY;
     key_sync <= key_meta;
