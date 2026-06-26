@@ -413,23 +413,36 @@ module demo_tb;
   endtask
 
   // reaction: run once with no key press so the poll times out, then again
-  // pressing as soon as the go signal appears. Measured on the pipeline: the
-  // go signal at cycle 160 and the poll timeout at 2974, both still inside the
-  // existing budgets. Only the elapsed-digit deadline needed room, since the
-  // six display writes are one taken-branch loop each.
+  // pressing as soon as the go signal appears. The poll deadline is read off
+  // the CYCLE register now, not counted in poll iterations, so the timeout is
+  // an exact cycle window instead of something that moves with the core.
+  // Measured on the pipeline: the go signal at cycle 164 and the miss LED at
+  // 2177, a span of 2013 against a sim REACT_TIMEOUT of 2000 cycles.
   task automatic check_reaction();
     int base;
     int deadline;
     int nibble;
     int elapsed;
+    int go_cyc;
+    int miss_cyc;
 
     key_in = 4'h0;
     start_demo("reaction");
     while ((mmio_ledr != 10'h020) && (cyc < 1000)) step_cycles(1);
     expect_hex("run 1 go signal", mmio_ledr, 10'h020);
     expect_range("run 1 go signal cycle", cyc, 20, 400);
+    expect_hex("run 1 go signal is the last LEDR write", ledr_val[ledr_n-1],
+               10'h020);
+    go_cyc = ledr_cyc[ledr_n-1];
+
     while ((mmio_ledr != 10'h001) && (cyc < 8000)) step_cycles(1);
     expect_hex("run 1 timeout result", mmio_ledr, 10'h001);
+    // The span from the go signal to the miss LED must be REACT_TIMEOUT cycles
+    // (2000 in the simulation build) plus only the few instructions that read
+    // CYCLE one last time and drive LEDR. A poll-count timeout would have made
+    // this span depend on the per-iteration cost, which is the bug this pins.
+    miss_cyc = ledr_cyc[ledr_n-1];
+    expect_range("run 1 timeout span", miss_cyc - go_cyc, 2000, 2060);
 
     key_in = 4'h0;
     start_demo("reaction");
