@@ -39,6 +39,7 @@ set_global_assignment -name SYSTEMVERILOG_FILE ../rtl/lsu.sv
 set_global_assignment -name SYSTEMVERILOG_FILE ../rtl/reg_file.sv
 set_global_assignment -name SYSTEMVERILOG_FILE ../rtl/imem.sv
 set_global_assignment -name SYSTEMVERILOG_FILE ../rtl/dmem.sv
+set_global_assignment -name SYSTEMVERILOG_FILE ../rtl/uart_tx.sv
 set_global_assignment -name SYSTEMVERILOG_FILE ../rtl/mmio.sv
 set_global_assignment -name SYSTEMVERILOG_FILE ../rtl/cpu_top.sv
 set_global_assignment -name SYSTEMVERILOG_FILE ../rtl/forward_unit.sv
@@ -210,5 +211,15 @@ set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to HEX5[3]
 set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to HEX5[4]
 set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to HEX5[5]
 set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to HEX5[6]
+
+# uart transmit line on the JP1 expansion header. Only GPIO_0[0] is assigned
+# because de1_soc_top only declares that one bit; the other 35 header pins stay
+# unused and tri-stated. PIN_AC18 is confirmed by the DE1-SoC User Manual
+# (Table 3-11, Pin Assignment of Expansion Headers) and matches Terasic's
+# SystemBuilder DE1_SoC.qsf. GPIO_0[0] is physical pin 1 of the JP1 header; the
+# header's GND pins are physical 12 and 30, so a USB to TTL adapter takes RX on
+# JP1 pin 1 and GND on JP1 pin 12 or 30. 115200 baud, 8N1.
+set_location_assignment PIN_AC18 -to GPIO_0[0]
+set_instance_assignment -name IO_STANDARD "3.3-V LVTTL" -to GPIO_0[0]
 
 set_global_assignment -name RESERVE_ALL_UNUSED_PINS_NO_OUTPUT_GND "AS INPUT TRI-STATED"

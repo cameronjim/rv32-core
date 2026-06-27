@@ -31,7 +31,7 @@ IMEM_BASE := 0x00000000
 DMEM_BASE := 0x00001000
 MEM_SIZE  := 4096
 
-DEMOS := led_blink counter switch_mirror fibonacci memtest reaction
+DEMOS := led_blink counter switch_mirror fibonacci memtest reaction uart_hello
 
 CFLAGS  := -march=rv32i -mabi=ilp32 -nostdlib -ffreestanding -O2 \
            -Wall -Wextra -I$(COMMON)
@@ -39,7 +39,8 @@ LDFLAGS := -Wl,--no-relax -T $(COMMON)/link.ld
 LDLIBS  := -lgcc
 
 CRT0 := $(COMMON)/crt0.s
-DEPS := $(CRT0) $(COMMON)/link.ld $(COMMON)/mmio.h $(COMMON)/config.h $(HEXGEN)
+DEPS := $(CRT0) $(COMMON)/link.ld $(COMMON)/mmio.h $(COMMON)/config.h \
+        $(COMMON)/uart.h $(HEXGEN)
 
 SIM_HEX := $(addprefix $(HEX)/,$(addsuffix .hex,$(DEMOS)))
 HW_HEX  := $(addprefix $(BUILD)/,$(addsuffix .hex,$(DEMOS)))

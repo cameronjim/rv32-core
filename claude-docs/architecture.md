@@ -298,7 +298,8 @@ the block does not check addr[31:16] itself; it decodes addr[15:0] only.
 ### de1_soc_top (rtl/de1_soc_top.sv)
 
 The board top. Ports use the DE1-SoC pin names exactly as the qsf assigns
-them (CLOCK_50, KEY, SW, LEDR, HEX0..HEX5); this is the one sanctioned
+them (CLOCK_50, KEY, SW, LEDR, HEX0..HEX5, and since phase 5b GPIO_0[0]
+carrying the uart line to JP1 header pin 1); this is the one sanctioned
 exception to snake_case port naming, so the pin assignment file lines up with
 the board documentation.
 
