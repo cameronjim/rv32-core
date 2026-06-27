@@ -1,5 +1,6 @@
 // imem: instruction memory, word addressed, read only. The read port is
-// registered on the negative clock edge so Quartus infers M10K block RAM.
+// registered on the positive clock edge so Quartus infers M10K block RAM, and
+// that output register doubles as the pipeline's IF/ID instruction register.
 // Contents come from an optional hex file so a program can be preloaded into
 // block RAM at synthesis time.
 
@@ -29,14 +30,18 @@ module imem #(
     end
   end
 
-  // Negative edge read. The core launches the address at the rising edge, the
-  // memory captures it half a period later at the falling edge, and rdata is
-  // stable well before the next rising edge, so a fetch still costs one full
-  // cycle. This exact shape, a single always_ff with no reset and no write
-  // bypass, is the pattern Quartus recognizes as M10K block RAM; an
-  // asynchronous read instead synthesized to a wall of registers and a giant
-  // read mux (33904 registers, 0 block memory bits at first synthesis).
-  always_ff @(negedge clk) begin
+  // Positive edge read. The pc register launches the address, this memory
+  // captures it on the same rising edge, and the instruction appears one cycle
+  // later, which is exactly the IF/ID boundary: rdata IS the instruction
+  // register, so the pipeline needs no separate flop for it. While the pc
+  // holds during a stall the same address is re-read, so the instruction
+  // persists on its own. This exact shape, a single always_ff with no reset
+  // and no write bypass, is the pattern Quartus recognizes as M10K block RAM;
+  // an asynchronous read instead synthesized to a wall of registers and a
+  // giant read mux (33904 registers, 0 block memory bits at first synthesis).
+  // The old negedge read gave the memory only half a period and cost the
+  // single-cycle core its clock rate; the pipeline gets a full one.
+  always_ff @(posedge clk) begin
     rdata <= mem[addr];
   end
 

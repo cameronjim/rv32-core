@@ -41,6 +41,9 @@ set_global_assignment -name SYSTEMVERILOG_FILE ../rtl/imem.sv
 set_global_assignment -name SYSTEMVERILOG_FILE ../rtl/dmem.sv
 set_global_assignment -name SYSTEMVERILOG_FILE ../rtl/mmio.sv
 set_global_assignment -name SYSTEMVERILOG_FILE ../rtl/cpu_top.sv
+set_global_assignment -name SYSTEMVERILOG_FILE ../rtl/forward_unit.sv
+set_global_assignment -name SYSTEMVERILOG_FILE ../rtl/hazard_unit.sv
+set_global_assignment -name SYSTEMVERILOG_FILE ../rtl/mem_wb_stage.sv
 set_global_assignment -name SYSTEMVERILOG_FILE ../rtl/de1_soc_top.sv
 
 set_global_assignment -name SDC_FILE rv32_core.sdc

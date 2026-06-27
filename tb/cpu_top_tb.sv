@@ -1,4 +1,4 @@
-// cpu_top_tb: top level self checking testbench for the single-cycle core.
+// cpu_top_tb: top level self checking testbench for the pipelined core.
 // Wraps cpu_top with imem and dmem, decoding dmem at 0x00001000, then runs the
 // assembled programs in tb/programs and checks registers and memory afterward.
 
@@ -10,8 +10,8 @@ module cpu_top_tb;
   localparam int BE_WIDTH       = DATA_WIDTH / 8;
   localparam int MEM_ADDR_WIDTH = 10;
   localparam int NUM_WORDS      = 1 << MEM_ADDR_WIDTH;
-  // Generous: the longest program (mem) finishes in 57 cycles even with every
-  // load costing two of them.
+  // Generous: the longest program finishes well inside a hundred cycles even
+  // with load-use stalls, data bus stalls and two cycle branch flushes.
   localparam int CYCLE_BUDGET   = 2000;
 
   // done convention: the magic word lands in the last dmem word, 0x00001FFC
@@ -240,6 +240,54 @@ module cpu_top_tb;
     check_mem(prog, DONE_ADDR, DONE_MAGIC);
   endtask
 
+  // expected values are documented line by line in tb/programs/pipeline.s,
+  // where every register is the result of one specific hazard being handled
+  task automatic check_pipeline(input string prog);
+    // EX/MEM forward, into both operands and then into one
+    check_reg(prog, 5,  32'h0000_0007);
+    check_reg(prog, 6,  32'h0000_000E);
+    check_reg(prog, 7,  32'h0000_0015);
+    // MEM/WB forward at distance two
+    check_reg(prog, 8,  32'h0000_0064);
+    check_reg(prog, 9,  32'h0000_0001);
+    check_reg(prog, 10, 32'h0000_00C8);
+    // WB-to-ID bypass at distance three
+    check_reg(prog, 11, 32'h0000_0032);
+    check_reg(prog, 12, 32'h0000_0002);
+    check_reg(prog, 13, 32'h0000_0003);
+    check_reg(prog, 14, 32'h0000_0064);
+    // store data forwarding, and a load feeding the instruction behind it
+    check_reg(prog, 15, 32'h0000_005A);
+    check_reg(prog, 16, 32'h0000_006B);
+    check_reg(prog, 17, 32'h0000_0000);
+    check_reg(prog, 18, 32'h0000_005A);
+    check_reg(prog, 19, 32'h0000_005B);
+    check_reg(prog, 20, 32'h0000_006B);
+    // forwarded branch operands
+    check_reg(prog, 21, 32'h0000_0009);
+    check_reg(prog, 22, 32'h0000_0009);
+    check_reg(prog, 23, 32'h0000_0008);
+    check_reg(prog, 24, 32'h0000_0004);
+    // jalr through a just loaded register; p_land is at 0x98
+    check_reg(prog, 25, 32'h0000_0098);
+    check_reg(prog, 26, 32'h0000_0098);
+    check_reg(prog, 27, 32'h0000_0077);
+    // a write to x0 must not forward the discarded value
+    check_reg(prog, 28, 32'h0000_0000);
+    check_reg(prog, 29, 32'h0000_006B);
+    // one fall-through marker, and no wrong-path instruction ever retired
+    check_reg(prog, 30, 32'h0000_0001);
+    check_reg(prog, 31, 32'h0000_0000);
+    check_reg(prog, 0,  32'h0000_0000);
+    check_mem(prog, 32'h0000_1000, 32'h0000_005A);
+    check_mem(prog, 32'h0000_1004, 32'h0000_006B);
+    check_mem(prog, 32'h0000_1008, 32'h0000_006B);
+    check_mem(prog, 32'h0000_100C, 32'h0000_0098);
+    check_mem(prog, 32'h0000_1010, 32'h0000_0009);
+    check_mem(prog, 32'h0000_1014, POISON);
+    check_mem(prog, DONE_ADDR, DONE_MAGIC);
+  endtask
+
   initial begin
     $dumpfile("sim/build/cpu_top_tb.vcd");
     $dumpvars(0, cpu_top_tb);
@@ -254,6 +302,9 @@ module cpu_top_tb;
 
     run_program("branch", "tb/programs/branch.hex");
     check_branch("branch");
+
+    run_program("pipeline", "tb/programs/pipeline.hex");
+    check_pipeline("pipeline");
 
     $display("PASS: cpu_top");
     $finish;

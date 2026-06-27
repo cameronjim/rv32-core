@@ -314,15 +314,13 @@ the board documentation.
   programs/hex/switch_mirror.hex and its data hex (switch_mirror has no
   delay constants, so the committed sim flavor behaves identically on the
   board).
-- Clocking: the CPU domain runs at 25 MHz, CLOCK_50 divided by two through a
-  toggle register (cpu_clk). First timing analysis put the single-cycle
-  core's Fmax at 29 MHz: the imem read, decode, register read, ALU and
-  next-pc selection all share one cycle, and that chain is about 34 ns of
-  logic. That is the single-cycle architecture's honest cost, not a bug; the
-  phase 5 pipeline is what buys the clock rate back. The sdc declares
-  cpu_clk with create_generated_clock -divide_by 2 so timing signs off at
-  the real operating frequency. Software cycle constants (config.h) use
-  25 MHz.
+- Clocking: the whole design runs directly on CLOCK_50. History: the
+  single-cycle core's Fmax was 29 MHz (imem read, decode, register read,
+  ALU and next-pc selection shared one ~34 ns cycle), so phase 4 shipped
+  with a divide-by-two cpu_clk at 25 MHz. The phase 5 pipeline split that
+  chain across five stages and bought the clock back: Fmax is now 66 MHz,
+  the divider and its generated-clock constraint are deleted, and config.h
+  is back to 50 MHz constants.
 
 ### de1_soc_tb (tb/de1_soc_tb.sv)
 
@@ -340,10 +338,95 @@ the DE1-SoC documentation), and rv32_core.sdc (50 MHz create_clock on
 CLOCK_50, false paths on the synchronized inputs and the LED and HEX
 outputs). Synthesis itself waits on the Quartus Prime Lite 23.1std install.
 
+## Pipeline (phase 5)
+
+The single-cycle core refactors into a classic five stage pipeline: IF, ID,
+EX, MEM, WB. The cpu_top port list does not change, so cpu_top_tb, demo_tb
+and de1_soc_tb keep working as regression suites. Architectural results must
+be identical; only cycle counts change (timing-tolerant testbench checks may
+be retuned with justification, architectural checks may not).
+
+What the pipeline buys back, learned during hardware bring-up: the 25 MHz
+clock divider goes away (each stage is a fraction of the old 34 ns critical
+path, so the core targets CLOCK_50 directly), and the load stall goes away
+(loads become CPI 1; only a dependent instruction immediately after a load
+stalls). The board top drops the divider, the sdc drops the generated clock,
+and config.h returns to 50 MHz constants.
+
+Stage assignment and how the synchronous memories fold in:
+
+- IF: the PC register feeds imem, which moves from negedge to posedge
+  synchronous read. The block RAM's mandatory output register IS the IF/ID
+  instruction register: the pc register launches the address, the M10K
+  captures it on the same rising edge, and the instruction appears in ID the
+  next cycle. No separate instr flop, no negedge trick. A 1-bit flush flag
+  registered alongside makes ID treat the incoming instruction as a NOP when
+  the previous cycle redirected (BRAM output cannot be cleared directly).
+  On a stall the fetch address switches to the IF/ID pc rather than the PC:
+  the PC already points one past the stalled instruction, so a frozen PC
+  would re-fetch the wrong word and silently drop the stalled instruction
+  (found the hard way; the mem program's lb caught it). The BRAM re-reads
+  the stalled instruction's address until the stall clears.
+- ID: decode (control), register file read, WB-to-ID bypass, imm_gen.
+- EX: forwarding muxes, ALU, branch_cmp, branch/jal target adder, all
+  control flow resolution (branch, jal, jalr redirect from here; static
+  predict not taken, taken costs a two cycle flush).
+- MEM: the dmem access cycle. The EX/MEM register launches the address and
+  the existing synchronous dmem (unchanged from phase 4) captures it on that
+  edge; load data lands exactly at the MEM/WB boundary. The lsu store path
+  sits in EX/MEM, the load extension path in WB off the arriving word.
+  Structural rule: a load owns the external data bus for two cycles, MEM and
+  WB, because the read data only exists during WB and the external decode
+  (which cannot be replicated inside the core) resolves it off the live bus
+  address. The hazard logic inserts one bubble when a memory instruction
+  immediately follows a load, exactly like a load-use stall. Isolated loads
+  stay CPI 1; only adjacent memory operations pay. This also means mmio
+  reads need no capture register: the bus holds still while the value is
+  consumed.
+- WB: writeback mux to the register file.
+
+Pipeline registers and their flush/stall behavior:
+
+- IF/ID: pc and pc_plus4 in flops, instr in the imem output register, plus
+  the flush-to-NOP flag. Stalls (holds) on load-use; flushes on EX redirect.
+- ID/EX: pc, pc_plus4, rs1/rs2 data, rs1/rs2/rd addresses, imm, control
+  bundle, uses_rs1/uses_rs2 flags from the decoder. Bubbles (controls
+  zeroed) on load-use stall or EX redirect.
+- EX/MEM: alu_result, forwarded store data, rd, funct3, pc_plus4, control
+  (reg_write, wb_sel, mem_read, mem_write).
+- MEM/WB: alu_result, pc_plus4, rd, funct3, addr_lo, reg_write, wb_sel. The
+  load word itself is not registered here: it arrives on the bus during WB
+  (dmem's output register, or mmio's combinational read held stable by the
+  bus rule above).
+- The cpu_top load_wait stall from phase 4 is deleted; the MEM stage
+  supersedes it.
+
+Hazard handling, in two new leaf modules with their own testbenches:
+
+- forward_unit: compares ID/EX rs1/rs2 against EX/MEM.rd and MEM/WB.rd
+  (reg_write set, rd nonzero). Two 2-bit selects per operand: register value,
+  EX/MEM alu_result, or MEM/WB wb_data, newest wins (EX/MEM beats MEM/WB).
+  Store data (rs2) uses the same forwarding. Loads never forward from EX/MEM
+  (their data does not exist yet); the load-use stall guarantees a dependent
+  instruction only ever needs the MEM/WB path.
+- hazard_unit: load-use detection: ID/EX.mem_read and ID/EX.rd matches a
+  register the IF/ID instruction actually reads (uses_rs1/uses_rs2 qualify
+  the match) stalls PC and IF/ID one cycle and bubbles ID/EX. EX redirect
+  flushes IF/ID and ID/EX. Redirect wins over stall.
+- WB-to-ID bypass in the datapath (the reg_file has no internal
+  write-through): if WB writes the register ID is reading, ID takes wb_data.
+
+The register file, ALU, imm_gen, branch_cmp, control, lsu, dmem and mmio are
+unchanged; imem changes read edge only. x0 never forwards (rd == 0 never
+matches). jalr uses the forwarded rs1 in EX. The back end (EX/MEM, bus,
+MEM/WB, writeback, both lsu instances) lives in its own module,
+mem_wb_stage, to respect the 400 line rule; cpu_top keeps the front end.
+Interrupts, exceptions and CSRs remain out of scope.
+
 ## Deferred to later phases
 
-- Synthesis, timing closure, programming the board (needs Quartus installed)
-- Pipeline registers, hazards, forwarding (phase 5)
+- UART transmitter peripheral (phase 5b)
+- HPS bridge integration (phase 5c)
 
 ## Testing strategy
 

@@ -1,6 +1,7 @@
 // control_tb: self-checking testbench for the control decoder.
 // Drives every row of the decode table plus unknown opcodes and compares
-// all ten control outputs against the expected values from architecture.md.
+// all twelve control outputs against the expected values from architecture.md,
+// including the uses_rs1 and uses_rs2 flags the pipeline's hazard unit needs.
 
 `timescale 1ns / 1ps
 
@@ -21,6 +22,8 @@ module control_tb;
   logic       branch;
   logic       jump;
   logic       jalr;
+  logic       uses_rs1;
+  logic       uses_rs2;
 
   control dut (
     .opcode    (opcode),
@@ -35,7 +38,9 @@ module control_tb;
     .mem_write (mem_write),
     .branch    (branch),
     .jump      (jump),
-    .jalr      (jalr)
+    .jalr      (jalr),
+    .uses_rs1  (uses_rs1),
+    .uses_rs2  (uses_rs2)
   );
 
   // iverilog does not implement enum .name(), so decode to text by hand
@@ -86,7 +91,9 @@ module control_tb;
                        input logic           e_mem_write,
                        input logic           e_branch,
                        input logic           e_jump,
-                       input logic           e_jalr);
+                       input logic           e_jalr,
+                       input logic           e_uses_rs1,
+                       input logic           e_uses_rs2);
     opcode    = i_opcode;
     funct3    = i_funct3;
     funct7_b5 = i_funct7_b5;
@@ -100,6 +107,8 @@ module control_tb;
     check_bit(instr_name, "branch",    branch,    e_branch);
     check_bit(instr_name, "jump",      jump,      e_jump);
     check_bit(instr_name, "jalr",      jalr,      e_jalr);
+    check_bit(instr_name, "uses_rs1",  uses_rs1,  e_uses_rs1);
+    check_bit(instr_name, "uses_rs2",  uses_rs2,  e_uses_rs2);
 
     if (alu_op !== e_alu_op) begin
       $display("FAIL: %s signal alu_op got %s expected %s",
@@ -117,55 +126,55 @@ module control_tb;
     $dumpfile("sim/build/control_tb.vcd");
     $dumpvars(0, control_tb);
 
-    //                            opcode     funct3      b30  rw a_src b_src alu_op      wb_sel  mr mw br jmp jalr
-    // R-type, alu_op from funct3 and instr[30]
-    check("add",   OP_REG,    F3_ADD_SUB, 1'b0, 1'b1, 1'b0, 1'b0, ALU_ADD,    WB_ALU, 1'b0, 1'b0, 1'b0, 1'b0, 1'b0);
-    check("sub",   OP_REG,    F3_ADD_SUB, 1'b1, 1'b1, 1'b0, 1'b0, ALU_SUB,    WB_ALU, 1'b0, 1'b0, 1'b0, 1'b0, 1'b0);
-    check("sll",   OP_REG,    F3_SLL,     1'b0, 1'b1, 1'b0, 1'b0, ALU_SLL,    WB_ALU, 1'b0, 1'b0, 1'b0, 1'b0, 1'b0);
-    check("slt",   OP_REG,    F3_SLT,     1'b0, 1'b1, 1'b0, 1'b0, ALU_SLT,    WB_ALU, 1'b0, 1'b0, 1'b0, 1'b0, 1'b0);
-    check("sltu",  OP_REG,    F3_SLTU,    1'b0, 1'b1, 1'b0, 1'b0, ALU_SLTU,   WB_ALU, 1'b0, 1'b0, 1'b0, 1'b0, 1'b0);
-    check("xor",   OP_REG,    F3_XOR,     1'b0, 1'b1, 1'b0, 1'b0, ALU_XOR,    WB_ALU, 1'b0, 1'b0, 1'b0, 1'b0, 1'b0);
-    check("srl",   OP_REG,    F3_SRL_SRA, 1'b0, 1'b1, 1'b0, 1'b0, ALU_SRL,    WB_ALU, 1'b0, 1'b0, 1'b0, 1'b0, 1'b0);
-    check("sra",   OP_REG,    F3_SRL_SRA, 1'b1, 1'b1, 1'b0, 1'b0, ALU_SRA,    WB_ALU, 1'b0, 1'b0, 1'b0, 1'b0, 1'b0);
-    check("or",    OP_REG,    F3_OR,      1'b0, 1'b1, 1'b0, 1'b0, ALU_OR,     WB_ALU, 1'b0, 1'b0, 1'b0, 1'b0, 1'b0);
-    check("and",   OP_REG,    F3_AND,     1'b0, 1'b1, 1'b0, 1'b0, ALU_AND,    WB_ALU, 1'b0, 1'b0, 1'b0, 1'b0, 1'b0);
+    //                            opcode     funct3      b30  rw a_src b_src alu_op      wb_sel  mr mw br jmp jalr u1 u2
+    // R-type, alu_op from funct3 and instr[30]. R reads both register fields.
+    check("add",   OP_REG,    F3_ADD_SUB, 1'b0, 1'b1, 1'b0, 1'b0, ALU_ADD,    WB_ALU, 1'b0, 1'b0, 1'b0, 1'b0, 1'b0, 1'b1, 1'b1);
+    check("sub",   OP_REG,    F3_ADD_SUB, 1'b1, 1'b1, 1'b0, 1'b0, ALU_SUB,    WB_ALU, 1'b0, 1'b0, 1'b0, 1'b0, 1'b0, 1'b1, 1'b1);
+    check("sll",   OP_REG,    F3_SLL,     1'b0, 1'b1, 1'b0, 1'b0, ALU_SLL,    WB_ALU, 1'b0, 1'b0, 1'b0, 1'b0, 1'b0, 1'b1, 1'b1);
+    check("slt",   OP_REG,    F3_SLT,     1'b0, 1'b1, 1'b0, 1'b0, ALU_SLT,    WB_ALU, 1'b0, 1'b0, 1'b0, 1'b0, 1'b0, 1'b1, 1'b1);
+    check("sltu",  OP_REG,    F3_SLTU,    1'b0, 1'b1, 1'b0, 1'b0, ALU_SLTU,   WB_ALU, 1'b0, 1'b0, 1'b0, 1'b0, 1'b0, 1'b1, 1'b1);
+    check("xor",   OP_REG,    F3_XOR,     1'b0, 1'b1, 1'b0, 1'b0, ALU_XOR,    WB_ALU, 1'b0, 1'b0, 1'b0, 1'b0, 1'b0, 1'b1, 1'b1);
+    check("srl",   OP_REG,    F3_SRL_SRA, 1'b0, 1'b1, 1'b0, 1'b0, ALU_SRL,    WB_ALU, 1'b0, 1'b0, 1'b0, 1'b0, 1'b0, 1'b1, 1'b1);
+    check("sra",   OP_REG,    F3_SRL_SRA, 1'b1, 1'b1, 1'b0, 1'b0, ALU_SRA,    WB_ALU, 1'b0, 1'b0, 1'b0, 1'b0, 1'b0, 1'b1, 1'b1);
+    check("or",    OP_REG,    F3_OR,      1'b0, 1'b1, 1'b0, 1'b0, ALU_OR,     WB_ALU, 1'b0, 1'b0, 1'b0, 1'b0, 1'b0, 1'b1, 1'b1);
+    check("and",   OP_REG,    F3_AND,     1'b0, 1'b1, 1'b0, 1'b0, ALU_AND,    WB_ALU, 1'b0, 1'b0, 1'b0, 1'b0, 1'b0, 1'b1, 1'b1);
 
-    // I-arith, instr[30] only matters for shifts
-    check("addi",  OP_IMM,    F3_ADD_SUB, 1'b0, 1'b1, 1'b0, 1'b1, ALU_ADD,    WB_ALU, 1'b0, 1'b0, 1'b0, 1'b0, 1'b0);
+    // I-arith, instr[30] only matters for shifts. rs2 is part of the immediate.
+    check("addi",  OP_IMM,    F3_ADD_SUB, 1'b0, 1'b1, 1'b0, 1'b1, ALU_ADD,    WB_ALU, 1'b0, 1'b0, 1'b0, 1'b0, 1'b0, 1'b1, 1'b0);
     // addi with a negative immediate sets instr[30], which must not decode as sub
-    check("addi_neg_imm", OP_IMM, F3_ADD_SUB, 1'b1, 1'b1, 1'b0, 1'b1, ALU_ADD, WB_ALU, 1'b0, 1'b0, 1'b0, 1'b0, 1'b0);
-    check("slti",  OP_IMM,    F3_SLT,     1'b0, 1'b1, 1'b0, 1'b1, ALU_SLT,    WB_ALU, 1'b0, 1'b0, 1'b0, 1'b0, 1'b0);
-    check("sltiu", OP_IMM,    F3_SLTU,    1'b0, 1'b1, 1'b0, 1'b1, ALU_SLTU,   WB_ALU, 1'b0, 1'b0, 1'b0, 1'b0, 1'b0);
-    check("xori",  OP_IMM,    F3_XOR,     1'b0, 1'b1, 1'b0, 1'b1, ALU_XOR,    WB_ALU, 1'b0, 1'b0, 1'b0, 1'b0, 1'b0);
-    check("ori",   OP_IMM,    F3_OR,      1'b0, 1'b1, 1'b0, 1'b1, ALU_OR,     WB_ALU, 1'b0, 1'b0, 1'b0, 1'b0, 1'b0);
-    check("andi",  OP_IMM,    F3_AND,     1'b0, 1'b1, 1'b0, 1'b1, ALU_AND,    WB_ALU, 1'b0, 1'b0, 1'b0, 1'b0, 1'b0);
-    check("slli",  OP_IMM,    F3_SLL,     1'b0, 1'b1, 1'b0, 1'b1, ALU_SLL,    WB_ALU, 1'b0, 1'b0, 1'b0, 1'b0, 1'b0);
-    check("srli",  OP_IMM,    F3_SRL_SRA, 1'b0, 1'b1, 1'b0, 1'b1, ALU_SRL,    WB_ALU, 1'b0, 1'b0, 1'b0, 1'b0, 1'b0);
-    check("srai",  OP_IMM,    F3_SRL_SRA, 1'b1, 1'b1, 1'b0, 1'b1, ALU_SRA,    WB_ALU, 1'b0, 1'b0, 1'b0, 1'b0, 1'b0);
+    check("addi_neg_imm", OP_IMM, F3_ADD_SUB, 1'b1, 1'b1, 1'b0, 1'b1, ALU_ADD, WB_ALU, 1'b0, 1'b0, 1'b0, 1'b0, 1'b0, 1'b1, 1'b0);
+    check("slti",  OP_IMM,    F3_SLT,     1'b0, 1'b1, 1'b0, 1'b1, ALU_SLT,    WB_ALU, 1'b0, 1'b0, 1'b0, 1'b0, 1'b0, 1'b1, 1'b0);
+    check("sltiu", OP_IMM,    F3_SLTU,    1'b0, 1'b1, 1'b0, 1'b1, ALU_SLTU,   WB_ALU, 1'b0, 1'b0, 1'b0, 1'b0, 1'b0, 1'b1, 1'b0);
+    check("xori",  OP_IMM,    F3_XOR,     1'b0, 1'b1, 1'b0, 1'b1, ALU_XOR,    WB_ALU, 1'b0, 1'b0, 1'b0, 1'b0, 1'b0, 1'b1, 1'b0);
+    check("ori",   OP_IMM,    F3_OR,      1'b0, 1'b1, 1'b0, 1'b1, ALU_OR,     WB_ALU, 1'b0, 1'b0, 1'b0, 1'b0, 1'b0, 1'b1, 1'b0);
+    check("andi",  OP_IMM,    F3_AND,     1'b0, 1'b1, 1'b0, 1'b1, ALU_AND,    WB_ALU, 1'b0, 1'b0, 1'b0, 1'b0, 1'b0, 1'b1, 1'b0);
+    check("slli",  OP_IMM,    F3_SLL,     1'b0, 1'b1, 1'b0, 1'b1, ALU_SLL,    WB_ALU, 1'b0, 1'b0, 1'b0, 1'b0, 1'b0, 1'b1, 1'b0);
+    check("srli",  OP_IMM,    F3_SRL_SRA, 1'b0, 1'b1, 1'b0, 1'b1, ALU_SRL,    WB_ALU, 1'b0, 1'b0, 1'b0, 1'b0, 1'b0, 1'b1, 1'b0);
+    check("srai",  OP_IMM,    F3_SRL_SRA, 1'b1, 1'b1, 1'b0, 1'b1, ALU_SRA,    WB_ALU, 1'b0, 1'b0, 1'b0, 1'b0, 1'b0, 1'b1, 1'b0);
 
-    // loads and stores, address is rs1 + imm
-    check("lw",    OP_LOAD,   F3_LW,      1'b0, 1'b1, 1'b0, 1'b1, ALU_ADD,    WB_MEM, 1'b1, 1'b0, 1'b0, 1'b0, 1'b0);
-    check("lb",    OP_LOAD,   F3_LB,      1'b0, 1'b1, 1'b0, 1'b1, ALU_ADD,    WB_MEM, 1'b1, 1'b0, 1'b0, 1'b0, 1'b0);
-    check("sw",    OP_STORE,  F3_LW,      1'b0, 1'b0, 1'b0, 1'b1, ALU_ADD,    WB_ALU, 1'b0, 1'b1, 1'b0, 1'b0, 1'b0);
-    check("sb",    OP_STORE,  F3_LB,      1'b0, 1'b0, 1'b0, 1'b1, ALU_ADD,    WB_ALU, 1'b0, 1'b1, 1'b0, 1'b0, 1'b0);
+    // loads read rs1 for the address; stores also read rs2 for the data
+    check("lw",    OP_LOAD,   F3_LW,      1'b0, 1'b1, 1'b0, 1'b1, ALU_ADD,    WB_MEM, 1'b1, 1'b0, 1'b0, 1'b0, 1'b0, 1'b1, 1'b0);
+    check("lb",    OP_LOAD,   F3_LB,      1'b0, 1'b1, 1'b0, 1'b1, ALU_ADD,    WB_MEM, 1'b1, 1'b0, 1'b0, 1'b0, 1'b0, 1'b1, 1'b0);
+    check("sw",    OP_STORE,  F3_LW,      1'b0, 1'b0, 1'b0, 1'b1, ALU_ADD,    WB_ALU, 1'b0, 1'b1, 1'b0, 1'b0, 1'b0, 1'b1, 1'b1);
+    check("sb",    OP_STORE,  F3_LB,      1'b0, 1'b0, 1'b0, 1'b1, ALU_ADD,    WB_ALU, 1'b0, 1'b1, 1'b0, 1'b0, 1'b0, 1'b1, 1'b1);
 
     // branches, resolved by branch_cmp so the ALU inputs are don't care defaults
-    check("beq",   OP_BRANCH, F3_BEQ,     1'b0, 1'b0, 1'b0, 1'b0, ALU_ADD,    WB_ALU, 1'b0, 1'b0, 1'b1, 1'b0, 1'b0);
-    check("bne",   OP_BRANCH, F3_BNE,     1'b0, 1'b0, 1'b0, 1'b0, ALU_ADD,    WB_ALU, 1'b0, 1'b0, 1'b1, 1'b0, 1'b0);
-    check("bltu",  OP_BRANCH, F3_BLTU,    1'b0, 1'b0, 1'b0, 1'b0, ALU_ADD,    WB_ALU, 1'b0, 1'b0, 1'b1, 1'b0, 1'b0);
+    check("beq",   OP_BRANCH, F3_BEQ,     1'b0, 1'b0, 1'b0, 1'b0, ALU_ADD,    WB_ALU, 1'b0, 1'b0, 1'b1, 1'b0, 1'b0, 1'b1, 1'b1);
+    check("bne",   OP_BRANCH, F3_BNE,     1'b0, 1'b0, 1'b0, 1'b0, ALU_ADD,    WB_ALU, 1'b0, 1'b0, 1'b1, 1'b0, 1'b0, 1'b1, 1'b1);
+    check("bltu",  OP_BRANCH, F3_BLTU,    1'b0, 1'b0, 1'b0, 1'b0, ALU_ADD,    WB_ALU, 1'b0, 1'b0, 1'b1, 1'b0, 1'b0, 1'b1, 1'b1);
 
-    // jumps, link value comes from PC+4
-    check("jal",   OP_JAL,    3'b000,     1'b0, 1'b1, 1'b0, 1'b0, ALU_ADD,    WB_PC4, 1'b0, 1'b0, 1'b0, 1'b1, 1'b0);
-    check("jalr",  OP_JALR,   3'b000,     1'b0, 1'b1, 1'b0, 1'b1, ALU_ADD,    WB_PC4, 1'b0, 1'b0, 1'b0, 1'b0, 1'b1);
+    // jumps, link value comes from PC+4. jal reads no register, jalr reads rs1.
+    check("jal",   OP_JAL,    3'b000,     1'b0, 1'b1, 1'b0, 1'b0, ALU_ADD,    WB_PC4, 1'b0, 1'b0, 1'b0, 1'b1, 1'b0, 1'b0, 1'b0);
+    check("jalr",  OP_JALR,   3'b000,     1'b0, 1'b1, 1'b0, 1'b1, ALU_ADD,    WB_PC4, 1'b0, 1'b0, 1'b0, 1'b0, 1'b1, 1'b1, 1'b0);
 
-    // upper immediates
-    check("lui",   OP_LUI,    3'b000,     1'b0, 1'b1, 1'b0, 1'b1, ALU_PASS_B, WB_ALU, 1'b0, 1'b0, 1'b0, 1'b0, 1'b0);
-    check("auipc", OP_AUIPC,  3'b000,     1'b0, 1'b1, 1'b1, 1'b1, ALU_ADD,    WB_ALU, 1'b0, 1'b0, 1'b0, 1'b0, 1'b0);
+    // upper immediates, neither reads a register
+    check("lui",   OP_LUI,    3'b000,     1'b0, 1'b1, 1'b0, 1'b1, ALU_PASS_B, WB_ALU, 1'b0, 1'b0, 1'b0, 1'b0, 1'b0, 1'b0, 1'b0);
+    check("auipc", OP_AUIPC,  3'b000,     1'b0, 1'b1, 1'b1, 1'b1, ALU_ADD,    WB_ALU, 1'b0, 1'b0, 1'b0, 1'b0, 1'b0, 1'b0, 1'b0);
 
-    // unknown opcodes decode to a nop that writes nothing
-    check("unknown_0000000", 7'b0000000, 3'b000, 1'b0, 1'b0, 1'b0, 1'b0, ALU_ADD, WB_ALU, 1'b0, 1'b0, 1'b0, 1'b0, 1'b0);
-    check("unknown_1111111", 7'b1111111, 3'b111, 1'b1, 1'b0, 1'b0, 1'b0, ALU_ADD, WB_ALU, 1'b0, 1'b0, 1'b0, 1'b0, 1'b0);
-    check("unknown_0001011", 7'b0001011, 3'b101, 1'b1, 1'b0, 1'b0, 1'b0, ALU_ADD, WB_ALU, 1'b0, 1'b0, 1'b0, 1'b0, 1'b0);
+    // unknown opcodes decode to a nop that writes nothing and reads nothing
+    check("unknown_0000000", 7'b0000000, 3'b000, 1'b0, 1'b0, 1'b0, 1'b0, ALU_ADD, WB_ALU, 1'b0, 1'b0, 1'b0, 1'b0, 1'b0, 1'b0, 1'b0);
+    check("unknown_1111111", 7'b1111111, 3'b111, 1'b1, 1'b0, 1'b0, 1'b0, ALU_ADD, WB_ALU, 1'b0, 1'b0, 1'b0, 1'b0, 1'b0, 1'b0, 1'b0);
+    check("unknown_0001011", 7'b0001011, 3'b101, 1'b1, 1'b0, 1'b0, 1'b0, ALU_ADD, WB_ALU, 1'b0, 1'b0, 1'b0, 1'b0, 1'b0, 1'b0, 1'b0);
 
     $display("PASS: control");
     $finish;

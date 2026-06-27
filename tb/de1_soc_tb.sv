@@ -18,15 +18,19 @@ module de1_soc_tb;
   localparam logic [SEG_WIDTH-1:0] SEG_BLANK = 7'h00;
 
   // Every budget below counts CLOCK_50 cycles, which is what step_cycles
-  // advances. de1_soc_top divides CLOCK_50 by two, so the CPU only steps on
-  // every other one and each budget is twice what the work actually needs.
+  // advances. There is no divider any more, so the CPU steps on every one of
+  // them and a budget is the cpu cycle count directly.
 
-  // how long switch_mirror may take to pick up a new switch value
-  localparam int MIRROR_BUDGET = 1600;
+  // How long switch_mirror may take to pick up a new switch value. Measured on
+  // the pipelined core with the committed simulation image: 51 to 54 cycles
+  // for the three switch patterns this testbench drives, so this is roughly
+  // seven times the worst measurement. It is patience, not an assertion: the
+  // pin checks below run either way once the poll gives up.
+  localparam int MIRROR_BUDGET = 400;
   // six cpu_clk cycles of reset held
-  localparam int RESET_CYCLES  = 12;
+  localparam int RESET_CYCLES  = 6;
   // two cpu_clk cycles after reset is released
-  localparam int RELEASE_CYCLES = 4;
+  localparam int RELEASE_CYCLES = 2;
 
   logic       CLOCK_50;
   logic [3:0] KEY;

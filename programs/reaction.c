@@ -32,26 +32,29 @@ int main(void)
         LEDR = REACT_GO_LED;
         uint32_t start = CYCLE;
 
-        // bounded poll so the demo cannot wedge when no button ever arrives
-        uint32_t polls = 0u;
+        // bounded poll so the demo cannot wedge when no button ever arrives.
+        // The deadline is read off CYCLE, so it is an exact wall clock window
+        // and does not shift with the cost of one poll iteration.
+        uint32_t missed = 0u;
         while ((KEY & KEY_MASK) == 0u) {
-            polls++;
-            if (polls >= REACT_TIMEOUT) {
+            if ((CYCLE - start) >= REACT_TIMEOUT) {
+                missed = 1u;
                 break;
             }
         }
 
         uint32_t elapsed = CYCLE - start;
 
-        LEDR = (polls >= REACT_TIMEOUT) ? REACT_MISS_LED : REACT_DONE_LED;
+        LEDR = missed ? REACT_MISS_LED : REACT_DONE_LED;
         hex_show_u24(elapsed);
 
         // hold the result, then wait for the button to come back up so one
-        // long press cannot count as the next round
+        // long press cannot count as the next round. Same wall clock bound,
+        // with its own start so a stuck button cannot wedge the demo either.
         delay_loop(REACT_HOLD);
-        polls = 0u;
-        while ((KEY & KEY_MASK) != 0u && polls < REACT_TIMEOUT) {
-            polls++;
+        start = CYCLE;
+        while ((KEY & KEY_MASK) != 0u && (CYCLE - start) < REACT_TIMEOUT) {
+            // spin
         }
     }
 }
