@@ -1,6 +1,7 @@
 // mmio_tb: self-checking testbench for the synthesizable mmio block. Runs the
 // dut and the behavioral tb/lib/mmio_sim.sv reference on identical stimulus and
-// compares rdata plus all register state every cycle, directed then randomized.
+// compares rdata, all register state, the uart busy flag and the serial line
+// every cycle, directed then randomized.
 
 `timescale 1ns / 1ps
 
@@ -12,6 +13,13 @@ module mmio_tb;
   localparam int HEX_COUNT  = 6;
   localparam int CLK_PERIOD = 10;
   localparam int RAND_ITERS = 3000;
+
+  // Both models get the same small divider so a frame finishes in 160 clocks
+  // instead of 4340. Must stay even so the bit centre sampling below lands on a
+  // clean half bit.
+  localparam int BAUD_DIV   = 16;
+  // start bit, eight data bits, stop bit
+  localparam int FRAME_BITS = 10;
 
   // The reference decodes the full architectural address, the dut only the low
   // 16 bits, so every cross-checked access carries the real mmio base.
@@ -27,6 +35,8 @@ module mmio_tb;
   localparam logic [15:0] OFF_HEX4  = 16'h0020;
   localparam logic [15:0] OFF_HEX5  = 16'h0024;
   localparam logic [15:0] OFF_CYCLE = 16'h0030;
+  localparam logic [15:0] OFF_UDATA = 16'h0040;
+  localparam logic [15:0] OFF_USTAT = 16'h0044;
 
   logic                  clk;
   logic                  rst_n;
@@ -41,11 +51,15 @@ module mmio_tb;
   logic [LEDR_WIDTH-1:0] ledr_dut;
   logic [SEG_WIDTH-1:0]  hex_dut[HEX_COUNT];
   logic [DATA_WIDTH-1:0] cycle_dut;
+  logic                  uart_tx_dut;
+  logic                  uart_busy_dut;
 
   logic [DATA_WIDTH-1:0] rdata_ref;
   logic [LEDR_WIDTH-1:0] ledr_ref;
   logic [SEG_WIDTH-1:0]  hex_ref[HEX_COUNT];
   logic [DATA_WIDTH-1:0] cycle_ref;
+  logic                  uart_tx_ref;
+  logic                  uart_busy_ref;
   logic                  wr_ledr_ref;
   logic [5:0]            wr_hex_ref;
   logic [DATA_WIDTH-1:0] wr_data_ref;
@@ -61,55 +75,62 @@ module mmio_tb;
   integer rand_seed = 32'd20260806;
 
   mmio #(
-    .DATA_WIDTH (DATA_WIDTH)
+    .DATA_WIDTH (DATA_WIDTH),
+    .BAUD_DIV   (BAUD_DIV)
   ) dut (
-    .clk      (clk),
-    .rst_n    (rst_n),
-    .addr     (addr),
-    .wdata    (wdata),
-    .we       (we),
-    .re       (re),
-    .rdata    (rdata_dut),
-    .sw_in    (sw_in),
-    .key_in   (key_in),
-    .ledr_out (ledr_dut),
-    .hex0_out (hex_dut[0]),
-    .hex1_out (hex_dut[1]),
-    .hex2_out (hex_dut[2]),
-    .hex3_out (hex_dut[3]),
-    .hex4_out (hex_dut[4]),
-    .hex5_out (hex_dut[5])
+    .clk       (clk),
+    .rst_n     (rst_n),
+    .addr      (addr),
+    .wdata     (wdata),
+    .we        (we),
+    .re        (re),
+    .rdata     (rdata_dut),
+    .sw_in     (sw_in),
+    .key_in    (key_in),
+    .ledr_out  (ledr_dut),
+    .hex0_out  (hex_dut[0]),
+    .hex1_out  (hex_dut[1]),
+    .hex2_out  (hex_dut[2]),
+    .hex3_out  (hex_dut[3]),
+    .hex4_out  (hex_dut[4]),
+    .hex5_out  (hex_dut[5]),
+    .uart_tx_o (uart_tx_dut)
   );
 
   // Reference model. Its port shape differs: it exposes register state as
   // *_q plus write strobes instead of driving named board outputs.
   mmio_sim #(
-    .DATA_WIDTH (DATA_WIDTH)
+    .DATA_WIDTH (DATA_WIDTH),
+    .BAUD_DIV   (BAUD_DIV)
   ) ref_model (
-    .clk     (clk),
-    .rst_n   (rst_n),
-    .addr    (addr),
-    .wdata   (wdata),
-    .we      (we),
-    .re      (re),
-    .rdata   (rdata_ref),
-    .sw_in   (sw_in),
-    .key_in  (key_in),
-    .ledr_q  (ledr_ref),
-    .hex0_q  (hex_ref[0]),
-    .hex1_q  (hex_ref[1]),
-    .hex2_q  (hex_ref[2]),
-    .hex3_q  (hex_ref[3]),
-    .hex4_q  (hex_ref[4]),
-    .hex5_q  (hex_ref[5]),
-    .cycle_q (cycle_ref),
-    .wr_ledr (wr_ledr_ref),
-    .wr_hex  (wr_hex_ref),
-    .wr_data (wr_data_ref)
+    .clk       (clk),
+    .rst_n     (rst_n),
+    .addr      (addr),
+    .wdata     (wdata),
+    .we        (we),
+    .re        (re),
+    .rdata     (rdata_ref),
+    .sw_in     (sw_in),
+    .key_in    (key_in),
+    .ledr_q    (ledr_ref),
+    .hex0_q    (hex_ref[0]),
+    .hex1_q    (hex_ref[1]),
+    .hex2_q    (hex_ref[2]),
+    .hex3_q    (hex_ref[3]),
+    .hex4_q    (hex_ref[4]),
+    .hex5_q    (hex_ref[5]),
+    .cycle_q   (cycle_ref),
+    .uart_tx_o (uart_tx_ref),
+    .uart_busy (uart_busy_ref),
+    .wr_ledr   (wr_ledr_ref),
+    .wr_hex    (wr_hex_ref),
+    .wr_data   (wr_data_ref)
   );
 
-  // The dut has no cycle counter port; the board top never needs one.
-  assign cycle_dut = dut.cycle_q;
+  // The dut has no cycle counter port; the board top never needs one. Its uart
+  // busy flag is internal too: software sees it through UART_STATUS.
+  assign cycle_dut     = dut.cycle_q;
+  assign uart_busy_dut = dut.uart_busy;
 
   initial begin
     clk = 1'b0;
@@ -133,6 +154,8 @@ module mmio_tb;
       4'd6:    mapped_off = OFF_HEX3;
       4'd7:    mapped_off = OFF_HEX4;
       4'd8:    mapped_off = OFF_HEX5;
+      4'd10:   mapped_off = OFF_UDATA;
+      4'd11:   mapped_off = OFF_USTAT;
       default: mapped_off = OFF_CYCLE;
     endcase
   endfunction
@@ -169,6 +192,14 @@ module mmio_tb;
       if (cycle_dut !== cycle_ref) begin
         $display("dut cycle 0x%08h, ref cycle 0x%08h", cycle_dut, cycle_ref);
         fail_now("cycle counter mismatch");
+      end
+      if (uart_tx_dut !== uart_tx_ref) begin
+        $display("dut uart_tx %0b, ref uart_tx %0b", uart_tx_dut, uart_tx_ref);
+        fail_now("uart line mismatch");
+      end
+      if (uart_busy_dut !== uart_busy_ref) begin
+        $display("dut uart busy %0b, ref uart busy %0b", uart_busy_dut, uart_busy_ref);
+        fail_now("uart busy mismatch");
       end
     end
   endtask
@@ -250,6 +281,89 @@ module mmio_tb;
     end
   endtask
 
+  // Spins until the free-running counter reaches target, keeping the caller on
+  // the usual "one nanosecond after a posedge" footing. The counter advances
+  // every clock, so it is the cheapest frame-relative clock the tb has.
+  task automatic wait_cycle_count(input logic [DATA_WIDTH-1:0] target);
+    while (cycle_dut < target) begin
+      @(posedge clk);
+      #1;
+    end
+  endtask
+
+  // The one serial decoder, sampling both models at the same instants so an
+  // asymmetric decode cannot hide a difference between them. Call it right
+  // after the write that started the frame, passing the counter value read
+  // there: that cycle is bit 0 of the frame, so bit k is centred BAUD_DIV/2
+  // clocks into its own slot.
+  task automatic decode_frame(input logic [DATA_WIDTH-1:0] t0,
+                              output logic [FRAME_BITS-1:0] frame_dut,
+                              output logic [FRAME_BITS-1:0] frame_ref);
+    for (int k = 0; k < FRAME_BITS; k++) begin
+      wait_cycle_count(t0 + (k * BAUD_DIV) + (BAUD_DIV / 2));
+      frame_dut[k] = uart_tx_dut;
+      frame_ref[k] = uart_tx_ref;
+    end
+  endtask
+
+  task automatic expect_frame(input logic [FRAME_BITS-1:0] frame_dut,
+                              input logic [FRAME_BITS-1:0] frame_ref,
+                              input logic [7:0] want, input string label);
+    checks = checks + 1;
+    if (frame_dut !== frame_ref) begin
+      $display("FAIL: %s, dut frame 0b%010b, ref frame 0b%010b at time %0t", label, frame_dut,
+               frame_ref, $time);
+      $fatal(1);
+    end
+    if (frame_dut[0] !== 1'b0) begin
+      $display("FAIL: %s, start bit was not low, frame 0b%010b at time %0t", label, frame_dut,
+               $time);
+      $fatal(1);
+    end
+    if (frame_dut[FRAME_BITS-1] !== 1'b1) begin
+      $display("FAIL: %s, stop bit was not high, frame 0b%010b at time %0t", label, frame_dut,
+               $time);
+      $fatal(1);
+    end
+    if (frame_dut[8:1] !== want) begin
+      $display("FAIL: %s, decoded 0x%02h expected 0x%02h at time %0t", label, frame_dut[8:1], want,
+               $time);
+      $fatal(1);
+    end
+  endtask
+
+  task automatic expect_uart(input logic want_tx, input logic want_busy, input string label);
+    checks = checks + 1;
+    if (uart_tx_dut !== want_tx || uart_busy_dut !== want_busy) begin
+      $display("FAIL: %s, dut tx %0b busy %0b expected tx %0b busy %0b at time %0t", label,
+               uart_tx_dut, uart_busy_dut, want_tx, want_busy, $time);
+      $fatal(1);
+    end
+    if (uart_tx_ref !== want_tx || uart_busy_ref !== want_busy) begin
+      $display("FAIL: %s, ref tx %0b busy %0b expected tx %0b busy %0b at time %0t", label,
+               uart_tx_ref, uart_busy_ref, want_tx, want_busy, $time);
+      $fatal(1);
+    end
+  endtask
+
+  // A UART_DATA write that also proves when busy becomes visible: the start
+  // pulse is taken combinationally, so busy already reads 1 in the write cycle
+  // while the line is still idling high. tx only drops to the start bit on the
+  // edge that ends this cycle, which is where the frame timing starts.
+  task automatic uart_write(input logic [DATA_WIDTH-1:0] data, input string label);
+    addr  = MMIO_BASE | {16'h0000, OFF_UDATA};
+    wdata = data;
+    we    = 1'b1;
+    re    = 1'b0;
+    #1;
+    expect_uart(1'b1, 1'b1, label);
+    compare_models();
+    @(posedge clk);
+    #1;
+    we = 1'b0;
+    re = 1'b0;
+  endtask
+
   // Holds reset for the given number of clocks, returning one nanosecond after
   // the release edge with both models cleared and their counters at zero.
   task automatic do_reset(input int cycles);
@@ -277,6 +391,9 @@ module mmio_tb;
   endtask
 
   logic [DATA_WIDTH-1:0] got;
+  logic [DATA_WIDTH-1:0] frame_t0;
+  logic [FRAME_BITS-1:0] frame_dut;
+  logic [FRAME_BITS-1:0] frame_ref;
   logic [DATA_WIDTH-1:0] rnd_a;
   logic [DATA_WIDTH-1:0] rnd_d;
   logic [DATA_WIDTH-1:0] rnd_c;
@@ -473,7 +590,71 @@ module mmio_tb;
     do_reset(2);
     cross_check = 1'b1;
 
-    // 12. Randomized mixed traffic over mapped and unmapped offsets, with
+    // 12. UART_DATA and UART_STATUS. busy answers 1 in the cycle of the write
+    //     that starts a frame and stays up for exactly FRAME_BITS*BAUD_DIV
+    //     clocks of shifting after the edge that took that write.
+    phase = "uart";
+    expect_read(OFF_USTAT, 32'h0000_0000, "UART_STATUS was not zero at reset");
+    expect_read(OFF_UDATA, 32'h0000_0000, "UART_DATA did not read zero");
+    // read with wdata driven, so a write only register that leaked the bus data
+    // back would show up
+    bus_op(OFF_UDATA, 32'hFFFF_FFFF, 1'b0, 1'b1, got);
+    checks = checks + 1;
+    if (got !== 32'h0000_0000) begin
+      $display("FAIL: UART_DATA read returned 0x%08h at time %0t", got, $time);
+      $fatal(1);
+    end
+    expect_uart(1'b1, 1'b0, "uart did not idle high before the first frame");
+
+    // 0x4B is not a palindrome, so a transmitter shifting MSB first fails here
+    uart_write(32'h0000_004B, "busy did not answer in the cycle of the write itself");
+    frame_t0 = cycle_dut;
+    expect_read(OFF_USTAT, 32'h0000_0001, "UART_STATUS did not read busy the cycle after a write");
+    // dropped: the transmitter is mid frame, so 0x5A never reaches the line
+    bus_write(OFF_UDATA, 32'h0000_005A);
+    expect_read(OFF_UDATA, 32'h0000_0000, "UART_DATA did not read zero while busy");
+    decode_frame(frame_t0, frame_dut, frame_ref);
+    expect_frame(frame_dut, frame_ref, 8'h4B, "decoded frame did not match the byte written");
+
+    // the last sample sat in the stop bit, so busy is still up here
+    expect_uart(1'b1, 1'b1, "uart dropped busy before the stop bit ended");
+    wait_cycle_count(frame_t0 + (FRAME_BITS * BAUD_DIV) - 1);
+    expect_uart(1'b1, 1'b1, "uart dropped busy one cycle early");
+    wait_cycle_count(frame_t0 + (FRAME_BITS * BAUD_DIV));
+    expect_uart(1'b1, 1'b0, "uart did not drop busy after exactly one frame");
+    // the second write really was dropped: no frame followed the first
+    expect_read(OFF_USTAT, 32'h0000_0000, "UART_STATUS stayed busy after the frame");
+    expect_uart(1'b1, 1'b0, "uart started a second frame from a write made while busy");
+
+    // a fresh write after the frame is accepted normally
+    bus_write(OFF_UDATA, 32'hFFFF_FF1C);
+    frame_t0 = cycle_dut;
+    decode_frame(frame_t0, frame_dut, frame_ref);
+    expect_frame(frame_dut, frame_ref, 8'h1C, "UART_DATA did not take only bits 7:0");
+    wait_cycle_count(frame_t0 + (FRAME_BITS * BAUD_DIV));
+    expect_read(OFF_USTAT, 32'h0000_0000, "UART_STATUS stayed busy after the second frame");
+
+    // 13. The offsets either side of the uart pair are still unmapped
+    phase = "uart neighbours";
+    bus_write(16'h003C, 32'hFFFF_FFFF);
+    bus_write(16'h0048, 32'hFFFF_FFFF);
+    expect_read(16'h003C, 32'h0000_0000, "unmapped offset 0x003C did not read zero");
+    expect_read(16'h0048, 32'h0000_0000, "unmapped offset 0x0048 did not read zero");
+    expect_uart(1'b1, 1'b0, "a write to a uart neighbour started a frame");
+
+    // 14. Reset mid frame parks the line high and clears busy on both models.
+    //     0x00 keeps tx low through the start and data bits, so the reset lands
+    //     while the line is being driven low.
+    phase = "uart reset";
+    bus_write(OFF_UDATA, 32'h0000_0000);
+    frame_t0 = cycle_dut;
+    wait_cycle_count(frame_t0 + (2 * BAUD_DIV));
+    expect_uart(1'b0, 1'b1, "uart was not mid frame with the line low before the reset");
+    do_reset(2);
+    expect_uart(1'b1, 1'b0, "a reset mid frame did not park tx high with busy clear");
+    expect_read(OFF_USTAT, 32'h0000_0000, "UART_STATUS was not zero after a reset mid frame");
+
+    // 15. Randomized mixed traffic over mapped and unmapped offsets, with
     //     random switch and key inputs and the occasional reset pulse
     phase = "random loop";
     for (int i = 0; i < RAND_ITERS; i++) begin
@@ -482,8 +663,10 @@ module mmio_tb;
       rnd_d     = $random(rand_seed);
       rnd_c     = $random(rand_seed);
 
+      // sel 10 and 11 pick the uart pair, so the random traffic starts frames,
+      // writes into busy frames and resets mid frame as well
       sel = rnd_c[3:0];
-      if (sel < 4'd10) begin
+      if (sel < 4'd12) begin
         r_off = {16'h0000, mapped_off(sel)};
       end else begin
         r_off = {16'h0000, rnd_a[15:0]};

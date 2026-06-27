@@ -285,9 +285,10 @@ behavioral tb/lib/mmio_sim.sv is its reference model; both implement the same
 map and the mmio testbench cross-checks them against each other.
 
 Ports: clk, rst_n; bus side addr (32), wdata (32), we, re, rdata (32,
-combinational read like dmem so loads stay single cycle); peripheral side
-sw_in (10), key_in (4, already synchronized and normalized so 1 means
-pressed), ledr_out (10), hex0_out..hex5_out (7 each, active high).
+combinational read); peripheral side sw_in (10), key_in (4, already
+synchronized and normalized so 1 means pressed), ledr_out (10),
+hex0_out..hex5_out (7 each, active high), and since phase 5b uart_tx_o (the
+serial line) with parameter BAUD_DIV forwarded to the uart_tx instance.
 
 LEDR and HEX0..HEX5 are read/write registers, reset to 0. SW and KEY reads
 reflect the inputs. CYCLE is a free-running counter, 0 at reset. Unmapped
@@ -445,7 +446,10 @@ including the stop bit. A start pulse while busy is ignored.
 
 Two new registers per the map above. UART_DATA writes (bits 7:0) pulse
 uart_tx's start; while busy the write is dropped (software's contract is to
-poll UART_STATUS bit 0 first). UART_STATUS reads {31'b0, busy}. Both the
+poll UART_STATUS bit 0 first). UART_STATUS reads {31'b0, busy}, and busy
+already reads 1 in the very cycle a write is accepted (uart_tx computes it
+combinationally from the accepted start), so poll-then-write can never
+double-write. Both the
 synthesizable mmio block and the behavioral mmio_sim implement the same
 semantics; mmio_sim models timing with the same BAUD_DIV so the demo
 testbench can decode real frames. The mmio block exposes uart_tx's pins
