@@ -2,50 +2,60 @@
 // -DSIMULATION picks values small enough that a testbench sees several steps
 // inside a few thousand cycles; the default values are tuned for the 50 MHz
 // CPU clock on the board, which is CLOCK_50 itself now that the pipeline
-// closes timing without a divider. delay_loop costs roughly two cycles per
-// iteration, so 25 million iterations is about one second.
+// closes timing without a divider.
 //
-// Most constants here are delay_loop iteration counts, which means their wall
-// clock cost depends on what a loop iteration costs on the current core.
-// REACT_TIMEOUT is the exception: it is a deadline, not a delay, so it is a
-// CYCLE register count and reaction.c compares it against elapsed cycles. Its
-// wall clock value is exact and does not move when the core changes.
+// Every time constant in this file is now a CYCLE register count. Its wall
+// clock value is exact at 50 MHz and independent of the core
+// microarchitecture and of what the compiler makes of a delay loop. The old
+// constants were delay_loop iteration counts, which only held while an
+// iteration cost two cycles: the pipeline made a taken branch cost a two
+// cycle flush, an iteration went to four cycles, and every demo ran at half
+// speed on the board. That was measured on hardware, not just in simulation.
+// REACT_TIMEOUT was already a CYCLE count and is unchanged.
 
 #ifndef CONFIG_H
 #define CONFIG_H
 
 #include <stdint.h>
 
+// delay_cycles needs the CYCLE register, so config.h depends on mmio.h.
+// That is the direction that keeps the dependency acyclic: mmio.h is the
+// lower layer, a pure register map that includes nothing but <stdint.h> and
+// knows nothing about tuning, while config.h is the policy layer on top of
+// it. Putting the helper in mmio.h instead would push demo timing policy
+// into the register map and give mmio.h a reason to care about SIMULATION.
+// Every demo already includes mmio.h before config.h, so no call site moves.
+#include "mmio.h"
+
 #ifdef SIMULATION
 
-#define BLINK_DELAY   48u    // led_blink: about 100 cycles per step
-#define COUNTER_DELAY 24u    // counter: about 100 cycles per count
-#define MIRROR_DELAY  8u     // switch_mirror: samples SW roughly every 40 cycles
-#define FIB_DELAY     12u    // fibonacci: about 80 cycles per term
+#define BLINK_DELAY   192u   // led_blink: about 200 cycles per step
+#define COUNTER_DELAY 96u    // counter: about 130 cycles per count
+#define MIRROR_DELAY  32u    // switch_mirror: samples SW roughly every 50 cycles
+#define FIB_DELAY     48u    // fibonacci: about 80 cycles per term
 
 #define MEMTEST_WORDS 8u     // 32 bytes of the test window
 
-#define REACT_DELAY_MIN   16u    // reaction: 16..79 iterations before the go signal
-#define REACT_DELAY_MASK  0x3Fu
+#define REACT_DELAY_MIN   64u    // reaction: 64..319 cycles before the go signal
+#define REACT_DELAY_MASK  0xFFu
 #define REACT_TIMEOUT     2000u  // CYCLE counts before giving up on KEY
-#define REACT_HOLD        32u    // delay_loop iterations the result stays up
+#define REACT_HOLD        128u   // CYCLE counts the result stays up
 
 #else
 
-// The delay_loop counts here are back to their 50 MHz values now that the
-// pipeline runs the CPU domain at CLOCK_50 with no divider. Their wall clock
-// times are approximate, since they depend on the cost of a loop iteration.
-#define BLINK_DELAY   3000000u   // about 0.12 s per step
-#define COUNTER_DELAY 6000000u   // about 0.24 s per count
-#define MIRROR_DELAY  25000u     // about 1 ms, so switches feel instant
-#define FIB_DELAY     12000000u  // about 0.5 s per term
+// CYCLE counts at 50 MHz, so 50000000 is exactly one second.
+#define BLINK_DELAY   6000000u   // 0.12 s per step
+#define COUNTER_DELAY 12000000u  // 0.24 s per count
+#define MIRROR_DELAY  50000u     // 1 ms, so switches feel instant
+#define FIB_DELAY     25000000u  // 0.5 s per term
 
 #define MEMTEST_WORDS 64u    // the full 256 byte test window
 
-#define REACT_DELAY_MIN   25000000u   // reaction: 1.0 s to about 3.7 s
-#define REACT_DELAY_MASK  0x3FFFFFFu
-#define REACT_TIMEOUT     100000000u  // CYCLE counts: exactly 2.0 s at 50 MHz
-#define REACT_HOLD        50000000u   // about 2 s of result on the displays
+// 50000000 + (0 .. 0x7FFFFFF) cycles, so exactly 1.0 s to about 3.68 s
+#define REACT_DELAY_MIN   50000000u
+#define REACT_DELAY_MASK  0x7FFFFFFu
+#define REACT_TIMEOUT     100000000u  // exactly 2.0 s before giving up on KEY
+#define REACT_HOLD        100000000u  // exactly 2.0 s of result on the displays
 
 #endif // SIMULATION
 
@@ -53,13 +63,22 @@
 // and bss and well below the stack, so nothing else in the image is disturbed.
 #define MEMTEST_BASE 0x00001800u
 
-// Busy wait. The empty asm keeps -O2 from deleting the loop, and taking the
-// count by value keeps it off the stack.
-static inline void delay_loop(uint32_t iterations)
+// Busy wait for a number of CPU cycles, timed off the free running CYCLE
+// register rather than by counting loop iterations, so the wall clock cost is
+// exact and does not move when the core or the compiler changes what one
+// iteration costs. CYCLE is a volatile read, which is what keeps -O2 from
+// hoisting it out of the loop, so no asm barrier is needed.
+//
+// The subtraction is unsigned, so the comparison stays correct across the
+// 32 bit wraparound of CYCLE: the difference is exact modulo 2^32 for any
+// span shorter than the full counter period, which is about 86 s at 50 MHz,
+// and every delay in this file is far shorter than that.
+static inline void delay_cycles(uint32_t cycles)
 {
-    while (iterations != 0u) {
-        iterations--;
-        __asm__ volatile("" ::: "memory");
+    uint32_t start = CYCLE;
+
+    while ((CYCLE - start) < cycles) {
+        // spin
     }
 }
 

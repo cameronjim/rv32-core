@@ -27,7 +27,7 @@ int main(void)
 
         LEDR = 0x000u;
         hex_blank_all();
-        delay_loop(REACT_DELAY_MIN + (state & REACT_DELAY_MASK));
+        delay_cycles(REACT_DELAY_MIN + (state & REACT_DELAY_MASK));
 
         LEDR = REACT_GO_LED;
         uint32_t start = CYCLE;
@@ -51,7 +51,7 @@ int main(void)
         // hold the result, then wait for the button to come back up so one
         // long press cannot count as the next round. Same wall clock bound,
         // with its own start so a stuck button cannot wedge the demo either.
-        delay_loop(REACT_HOLD);
+        delay_cycles(REACT_HOLD);
         start = CYCLE;
         while ((KEY & KEY_MASK) != 0u && (CYCLE - start) < REACT_TIMEOUT) {
             // spin

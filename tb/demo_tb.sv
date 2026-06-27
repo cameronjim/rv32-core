@@ -252,11 +252,13 @@ module demo_tb;
   endtask
 
   // led_blink: one lit bit walks up to LEDR[9] and back down, one write per
-  // delay step, 18 writes per full bounce, measured near 201 cycles apart on
-  // the pipeline (103 on the load-stall single-cycle core). delay_loop is two
-  // instructions plus a taken branch per iteration, and a taken branch now
-  // costs a two cycle flush, so every delay in this file roughly doubled.
-  // The budget grew with it: 20 writes at 201 cycles needs about 3850.
+  // delay step, 18 writes per full bounce. Step spacing history: 103 cycles on
+  // the load-stall single-cycle core, 201 once the pipeline made every taken
+  // branch in delay_loop cost a flush, and 207..211 now that the delay is
+  // delay_cycles(BLINK_DELAY) with BLINK_DELAY of 192 CYCLE counts. The extra
+  // cycles beyond 192 are the LEDR write and the bounce logic wrapped around
+  // the delay, and the four cycle spread is the granularity of the last CYCLE
+  // poll. 20 writes now land at cycle 3977, inside the same 5000 cycle budget.
   task automatic check_led_blink();
     int phase;
     int pos;
@@ -273,15 +275,19 @@ module demo_tb;
     end
     expect_range("first LEDR write cycle", ledr_cyc[0], 5, 60);
     for (int i = 1; i < 20; i++)
+      // was 180..230 against a measured 201; now 195..225 against 207..211
       expect_range($sformatf("LEDR write %0d spacing", i),
-                   ledr_cyc[i] - ledr_cyc[i-1], 180, 230);
+                   ledr_cyc[i] - ledr_cyc[i-1], 195, 225);
   endtask
 
   // counter: HEX4 and HEX5 go dark once, then a four write burst per count
-  // with the BCD digits carried by hand, measured 128 cycles apart on the
-  // pipeline (73 single-cycle, 82 once the load stall landed). The delay loop
-  // reloads its counter from memory, so this one pays taken branch flushes and
-  // load-use stalls both.
+  // with the BCD digits carried by hand. Burst spacing history: 73 cycles
+  // single-cycle, 82 once the load stall landed, 128 on the pipeline, and
+  // 135..141 now that the delay is delay_cycles(COUNTER_DELAY) with
+  // COUNTER_DELAY of 96 CYCLE counts. The delay itself no longer reloads a
+  // counter from memory, so what is left on top of the 96 is the four display
+  // writes and the BCD carry. 11 full counts land at cycle 1419, comfortably
+  // inside the same 2500 cycle budget.
   task automatic check_counter();
     logic [6:0] exp0[11];
 
@@ -307,15 +313,18 @@ module demo_tb;
       expect_hex($sformatf("HEX1 update %0d", i), hex_val[hex_at(1, i)], 7'h3F);
     expect_hex("HEX1 update 10", hex_val[hex_at(1, 10)], 7'h06);
 
+    // was 100..160 against a measured 128; now 125..155 against 135..141
     for (int i = 1; i < 11; i++)
       expect_range($sformatf("HEX0 update %0d spacing", i),
-                   hex_cyc[hex_at(0, i)] - hex_cyc[hex_at(0, i-1)], 100, 160);
+                   hex_cyc[hex_at(0, i)] - hex_cyc[hex_at(0, i-1)], 125, 155);
     expect_hex("LEDR untouched", mmio_ledr, 10'h000);
   endtask
 
-  // switch_mirror: SW lands on LEDR and its three hex digits on HEX0..HEX2,
-  // refreshed roughly every 51 cycles on the pipeline (34 single-cycle, 38
-  // with the load stall). The 600 cycle budget still has room to spare.
+  // switch_mirror: SW lands on LEDR and its three hex digits on HEX0..HEX2.
+  // Refresh history: 34 cycles single-cycle, 38 with the load stall, 51 on the
+  // pipeline, and 57 now with delay_cycles(MIRROR_DELAY) at MIRROR_DELAY of 32
+  // CYCLE counts. Both switch settings are picked up 57 cycles after they are
+  // driven, so the 600 cycle budget keeps an order of magnitude to spare.
   task automatic check_switch_mirror();
     int deadline;
 
@@ -342,9 +351,12 @@ module demo_tb;
   endtask
 
   // fibonacci: terms 0,1,1,2,3,5,8,13.. spread over HEX0..HEX5, with LEDR
-  // pulsing 0x001 then 0x000 at every restart of the sequence. The sequence
-  // now takes 3903 cycles instead of about 2700, again from the delay loop's
-  // taken branches, so two restarts still land inside the 6000 cycle run.
+  // pulsing 0x001 then 0x000 at every restart of the sequence. Sequence length
+  // history: about 2700 cycles single-cycle, 3903 on the pipeline, and 4162
+  // now with delay_cycles(FIB_DELAY) at FIB_DELAY of 48 CYCLE counts. The
+  // first restart is at cycle 44 and the second at 4206, and a third would not
+  // arrive until about 8400, so exactly two restarts fall inside the 6000
+  // cycle run and 54 HEX0 terms are logged against the 8 the check reads.
   task automatic check_fibonacci();
     logic [6:0] exp0[8];
     int         pulses;
@@ -377,7 +389,8 @@ module demo_tb;
     if (pulses < 2)
       fail("restart pulses in 6000 cycles", $sformatf("%0d", pulses), "2 or more");
     expect_range("first restart cycle", first_pulse, 5, 200);
-    expect_range("restart period", second_pulse - first_pulse, 3400, 4400);
+    // was 3400..4400 against a measured 3903; now 3900..4450 against 4162
+    expect_range("restart period", second_pulse - first_pulse, 3900, 4450);
   endtask
 
   // memtest: walking ones then an address pattern over the dmem window at
@@ -389,6 +402,10 @@ module demo_tb;
   // the top costs two cycles, which more than eats the gain. The windows below
   // are centered on the new numbers and the run is 3000 cycles so the final
   // "still passing" check happens after the pass code lands.
+  // The delay_loop to delay_cycles switch left this demo alone: memtest has no
+  // delay at all, so it never called the helper, its hex image came out byte
+  // identical, and phase 2 and the pass code re-measure at exactly 2426 and
+  // 2523. The windows below are unchanged for that reason.
   task automatic check_memtest();
     start_demo("memtest");
     while (cyc < 3000) step_cycles(1);
@@ -417,7 +434,13 @@ module demo_tb;
   // the CYCLE register now, not counted in poll iterations, so the timeout is
   // an exact cycle window instead of something that moves with the core.
   // Measured on the pipeline: the go signal at cycle 164 and the miss LED at
-  // 2177, a span of 2013 against a sim REACT_TIMEOUT of 2000 cycles.
+  // 2177, a span of 2013 against a sim REACT_TIMEOUT of 2000 cycles. With the
+  // pre-go wait moved from delay_loop to delay_cycles the go signal comes at
+  // cycle 141 and the miss LED at 2154, and the span is still exactly 2013:
+  // REACT_TIMEOUT was already a CYCLE count, so the deadline did not move and
+  // only the pseudo random wait in front of it did. The go signal window below
+  // stays 20..400, which covers the whole REACT_DELAY_MIN + REACT_DELAY_MASK
+  // spread of 64..319 cycles plus the seed and LFSR work around it.
   task automatic check_reaction();
     int base;
     int deadline;

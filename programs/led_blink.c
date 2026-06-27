@@ -12,7 +12,7 @@ int main(void)
 
     for (;;) {
         LEDR = 1u << pos;
-        delay_loop(BLINK_DELAY);
+        delay_cycles(BLINK_DELAY);
 
         // bounce off both ends without ever repeating an endpoint
         if (step > 0) {

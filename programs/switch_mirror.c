@@ -19,6 +19,6 @@ int main(void)
         HEX1 = seven_seg_digits[(value >> 4) & 0xFu];
         HEX2 = seven_seg_digits[(value >> 8) & 0xFu];
 
-        delay_loop(MIRROR_DELAY);
+        delay_cycles(MIRROR_DELAY);
     }
 }

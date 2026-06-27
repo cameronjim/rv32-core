@@ -15,7 +15,7 @@ int main(void)
         // LEDR pulses for the length of the first term of each sequence
         LEDR = 0x001u;
         hex_show_u24(a);
-        delay_loop(FIB_DELAY);
+        delay_cycles(FIB_DELAY);
         LEDR = 0x000u;
 
         for (;;) {
@@ -30,7 +30,7 @@ int main(void)
             }
 
             hex_show_u24(a);
-            delay_loop(FIB_DELAY);
+            delay_cycles(FIB_DELAY);
         }
     }
 }

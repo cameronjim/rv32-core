@@ -19,7 +19,7 @@ int main(void)
             HEX(i) = seven_seg_digits[digit[i]];
         }
 
-        delay_loop(COUNTER_DELAY);
+        delay_cycles(COUNTER_DELAY);
 
         for (unsigned i = 0u; i < DIGITS; i++) {
             digit[i]++;

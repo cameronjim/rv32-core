@@ -57,7 +57,12 @@ on demand in programs/build/ (gitignored) for the phase 4 Quartus flow.
 | switch_mirror | continuously mirrors SW onto LEDR and its value onto HEX0..HEX2 |
 | fibonacci     | computes the sequence, shows each value on the HEX displays, restarts on overflow |
 | memtest       | walking-ones and address-pattern test over a dmem window, LEDR shows 0x3FF pass or a failure code |
-| reaction      | waits a pseudo random delay (seeded from CYCLE), lights an LED, measures cycles until a KEY press, shows the count on HEX; gives up after exactly 2 s (a CYCLE register deadline, not an iteration count) |
+| reaction      | waits a pseudo random delay (seeded from CYCLE), lights an LED, measures cycles until a KEY press, shows the count on HEX; gives up after exactly 2 s |
+
+All demo timing (delays and deadlines alike) counts the CYCLE register, never
+loop iterations. Iteration-counted timing broke twice: the reaction timeout
+ran 6x long, and every delay ran 2x slow the day the pipeline changed what a
+loop iteration costs. Cycle counts are exact on any core at 50 MHz.
 
 Each demo is a single C file in programs/ built by programs/Makefile
 (`make -C programs <name>` or `make -C programs all`). The simulation
