@@ -1,8 +1,8 @@
 # Single-cycle datapath architecture
 
 Design decisions for the single-cycle RV32I core. This is the contract the RTL
-implements. Updated as the design evolves; last touched 2026-08-04 (phase 1,
-leaf modules).
+implements. Updated as the design evolves; last touched 2026-08-04 (phase 2,
+memory system and core integration).
 
 ## Datapath overview
 
@@ -121,14 +121,115 @@ ignores it because it is part of the immediate.
 
 Unknown opcodes decode to all zeros (a nop that writes nothing).
 
+## Memory map
+
+| region | base        | size            | notes                          |
+| ------ | ----------- | --------------- | ------------------------------ |
+| imem   | 0x0000_0000 | 4 KB, 1024 words| reset vector is 0x0000_0000    |
+| dmem   | 0x0000_1000 | 4 KB, 1024 words| read/write data                |
+| mmio   | 0xFFFF_0000 | tbd             | LEDs, 7-segs, switches (phase 4)|
+
+Address decode lives outside cpu_top: the core emits full 32-bit byte
+addresses, and the instantiating level (testbench now, board top later) maps
+them onto memories and peripherals. The dmem word index is addr[11:2] within
+its region. Misaligned accesses are not supported and have undefined behavior;
+there is no trap machinery.
+
+## Modules (phase 2)
+
+### imem (rtl/imem.sv)
+
+Instruction memory, word addressed, asynchronous read. Parameters ADDR_WIDTH
+(word index width, default 10) and INIT_FILE (hex file loaded with $readmemh
+when nonempty). Ports: `addr` (word index), `rdata` (32 bit). Read only.
+
+Initialization uses an `initial $readmemh` block. This is the one sanctioned
+use of `initial` in synthesizable code: Quartus honors it as block RAM initial
+content, which is exactly how programs get preloaded at synthesis time.
+
+Note on synthesis: asynchronous read keeps the core single cycle but means
+Quartus will not infer M10K block RAM (M10K needs a registered read address).
+Small memories land in MLABs or logic instead. Acceptable at this size;
+revisit at hardware bring-up if resource usage hurts.
+
+### dmem (rtl/dmem.sv)
+
+Data memory, word addressed with per-byte write lanes, asynchronous read.
+Parameters ADDR_WIDTH (default 10), DATA_WIDTH (32), INIT_FILE (optional
+$readmemh preload, later useful for .data sections). Ports: `clk`, `addr`
+(word index), `wdata`, `byte_en` (4 bit), `we`, `rdata`. Writes happen on
+posedge clk for each lane where `we && byte_en[i]`. Reads return the full
+word; lane extraction is the lsu's job.
+
+The memory array has no reset. Block RAM contents cannot be cleared by a reset
+signal, so this sequential block is exempt from the rst_n rule. Contents are
+undefined at power-up unless INIT_FILE is given.
+
+### lsu (rtl/lsu.sv)
+
+Load-store unit, pure combinational, sits between the core datapath and raw
+word memory. Handles lane steering and extension for byte and halfword access.
+
+Store path: inputs `funct3`, `addr_lo` (addr[1:0]), `store_data` (rs2 value).
+Outputs `mem_wdata` (store data shifted into the correct lanes) and `mem_be`
+(4-bit byte enable). sb enables one lane, sh enables two (addr_lo[1] picks the
+half), sw enables all four. Undefined funct3 produces mem_be = 0 so nothing is
+written.
+
+Load path: inputs `funct3`, `addr_lo`, `mem_rdata` (raw word). Output
+`load_data`: lb/lbu select the addressed byte and sign/zero extend, lh/lhu the
+addressed halfword, lw passes through. Undefined funct3 produces 0.
+
+### cpu_top (rtl/cpu_top.sv)
+
+The single-cycle core: all phase 1 modules plus the lsu, PC register, and
+muxes. Memories stay outside so the same core drops into the testbench now and
+the board top with MMIO decode later. Parameter RESET_VECTOR (default
+32'h0000_0000).
+
+Ports: `clk`, `rst_n`; instruction bus `imem_addr` (byte address, the PC) and
+`imem_rdata`; data bus `dmem_addr` (byte address), `dmem_wdata`, `dmem_be`,
+`dmem_we`, `dmem_re`, `dmem_rdata`.
+
+Internals:
+
+- PC register, synchronous active-low reset to RESET_VECTOR
+- pc_plus4 adder and a branch-target adder (pc + imm) shared by branches and jal
+- instruction field slicing: rs1 = instr[19:15], rs2 = instr[24:20],
+  rd = instr[11:7], funct3 = instr[14:12], funct7_b5 = instr[30]
+- ALU input muxes per control: a = rs1_data or pc, b = rs2_data or imm
+- next-pc priority mux: jalr takes alu_result with bit 0 cleared, else jump or
+  taken branch takes pc + imm, else pc_plus4
+- writeback mux per wb_sel: alu_result, lsu load_data, or pc_plus4
+- dmem_addr = alu_result, dmem_we = mem_write, dmem_re = mem_read, byte
+  enables and wdata from the lsu store path
+
+### cpu_top_tb (tb/cpu_top_tb.sv)
+
+Instantiates cpu_top, imem, and dmem, decoding dmem at 0x1000 (addr[31:12] ==
+20'h00001). Runs a list of assembled test programs. Per test: load the hex
+into imem with $readmemh, pulse reset, run until the program signals done or a
+cycle budget expires, then check architectural state through hierarchical
+references into the register file and dmem array.
+
+Done convention: a finished test program stores the magic word 32'h0000600D to
+the last dmem word (byte address 0x1FFC). Timeout is a test failure.
+
+Test programs live in tb/programs/ as assembly source plus committed .hex
+files (regenerated with the cross toolchain via a make target, committed so
+`make test` does not require the toolchain):
+
+- arith: R-type and I-type results landing in known registers
+- mem: sw/lw, sb/lb/lbu, sh/lh/lhu across byte lanes, sign extension cases
+- branch: each branch taken and not taken, jal/jalr call and return, lui/auipc
+
 ## Deferred to later phases
 
-- Instruction and data memory, byte/halfword load-store logic (phase 2)
-- cpu_top wiring, PC register, next-pc mux, top-level testbench (phase 2)
-- Memory-mapped I/O decode (phase 4)
+- Linker script, C runtime, demo programs, programs/ Makefile (phase 3)
+- Memory-mapped I/O decode, board top, pin assignments (phase 4)
 - Pipeline registers, hazards, forwarding (phase 5)
 
-## Testing strategy (phase 1)
+## Testing strategy
 
 Every module has a self-checking testbench in tb/ that prints one final
 "PASS: <module>" line or "FAIL: <detail>" lines and exits nonzero on failure
