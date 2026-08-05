@@ -35,3 +35,25 @@ endif
 clean:
 	@if exist "$(BUILD_WIN)" rmdir /s /q "$(BUILD_WIN)"
 	@echo Cleaned $(BUILD_DIR).
+
+# Test program hex files. These are committed, so `make test` never needs the
+# cross toolchain; run `make tb-programs` only after editing a .s source.
+# Override RISCV_PREFIX if the xPack toolchain lives somewhere else.
+RISCV_PREFIX ?= C:/Users/CJ/opt/xpack-riscv-none-elf-gcc-15.2.0-1/bin/riscv-none-elf-
+PYTHON       ?= python
+
+PROG_DIR  := tb/programs
+PROGRAMS  := arith mem branch
+PROG_HEX  := $(addprefix $(PROG_DIR)/,$(addsuffix .hex,$(PROGRAMS)))
+
+.PHONY: tb-programs
+tb-programs: $(PROG_HEX)
+	@echo Regenerated $(PROG_HEX).
+
+# --no-relax keeps the linked instruction stream matching the .s source, so the
+# expected values documented per line stay trustworthy
+$(PROG_DIR)/%.hex: $(PROG_DIR)/%.s tools/hex_gen.py
+	@if not exist "$(BUILD_WIN)" mkdir "$(BUILD_WIN)"
+	$(RISCV_PREFIX)gcc -march=rv32i -mabi=ilp32 -nostdlib -Wl,--no-relax -Ttext=0x0 -o $(BUILD_DIR)/$*.elf $<
+	$(RISCV_PREFIX)objcopy -O binary $(BUILD_DIR)/$*.elf $(BUILD_DIR)/$*.bin
+	$(PYTHON) tools/hex_gen.py $(BUILD_DIR)/$*.bin $@

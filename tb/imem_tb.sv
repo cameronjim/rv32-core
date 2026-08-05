@@ -4,10 +4,6 @@
 
 `timescale 1ns / 1ps
 
-// A macro, not a localparam: Icarus cannot pass a string localparam through a
-// parameter override, though string literals bind fine.
-`define IMEM_FIX_FILE "sim/build/imem_tb_fixture.hex"
-
 module imem_tb;
 
   localparam int INSTR_WIDTH     = 32;
@@ -16,8 +12,9 @@ module imem_tb;
   localparam int BARE_ADDR_WIDTH = 6;
   localparam int FIX_WORDS       = 16;
 
-  // Fixture program, listed word 15 down to word 0 because the concatenation
-  // builds a packed vector: word i is FIX_DATA[i*INSTR_WIDTH +: INSTR_WIDTH].
+  // Expected contents of tb/fixtures/imem_fixture.hex, listed word 15 down to
+  // word 0 because the concatenation builds a packed vector: word i is
+  // FIX_DATA[i*INSTR_WIDTH +: INSTR_WIDTH].
   localparam logic [FIX_WORDS*INSTR_WIDTH-1:0] FIX_DATA = {
     32'h0000_600D,  // 15 done magic, also the last initialized word
     32'hFFFF_FFFF,  // 14
@@ -49,17 +46,10 @@ module imem_tb;
   int unsigned checks;
   time         mark;
 
-  // The fixture writer must come first: Icarus runs the initial blocks of
-  // child instances before the parent's, and imem reads INIT_FILE at time 0.
-  imem_fixture #(
-    .FILE_NAME(`IMEM_FIX_FILE),
-    .NUM_WORDS(FIX_WORDS),
-    .DATA     (FIX_DATA)
-  ) fixture ();
-
+  // Fixture path is relative to the repo root, where simulations are run.
   imem #(
     .ADDR_WIDTH(MAIN_ADDR_WIDTH),
-    .INIT_FILE (`IMEM_FIX_FILE)
+    .INIT_FILE ("tb/fixtures/imem_fixture.hex")
   ) dut_main (
     .addr  (main_addr),
     .rdata (main_rdata)
@@ -68,7 +58,7 @@ module imem_tb;
   // same fixture, narrower address space, exactly filled by the 16 words
   imem #(
     .ADDR_WIDTH(ALT_ADDR_WIDTH),
-    .INIT_FILE (`IMEM_FIX_FILE)
+    .INIT_FILE ("tb/fixtures/imem_fixture.hex")
   ) dut_alt (
     .addr  (alt_addr),
     .rdata (alt_rdata)
@@ -192,33 +182,6 @@ module imem_tb;
 
     $display("PASS: imem");
     $finish;
-  end
-
-endmodule
-
-// imem_fixture: writes the hex fixture that the imem instances preload.
-// It is a child instance rather than an initial block in imem_tb because
-// Icarus runs instance initial blocks before the parent module's.
-module imem_fixture #(
-  parameter string FILE_NAME = "",
-  parameter int    NUM_WORDS = 1,
-  parameter logic [NUM_WORDS*32-1:0] DATA = '0
-);
-
-  int fd;
-
-  initial begin
-    fd = $fopen(FILE_NAME, "w");
-    if (fd == 0) begin
-      $display("FAIL: could not open %s for writing", FILE_NAME);
-      $fatal(1);
-    end
-    // an explicit start address keeps $readmemh quiet about partial loads
-    $fdisplay(fd, "@%08h", 0);
-    for (int i = 0; i < NUM_WORDS; i++) begin
-      $fdisplay(fd, "%08h", DATA[i*32+:32]);
-    end
-    $fclose(fd);
   end
 
 endmodule

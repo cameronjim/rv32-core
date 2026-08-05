@@ -48,6 +48,16 @@ The xPack toolchain names binaries `riscv-none-elf-*`, not `riscv32-unknown-elf-
 It is a multilib build, so `-march=rv32i -mabi=ilp32` selects a pure RV32I target.
 Both invocations were smoke-tested on install day and work.
 
+Two lessons from the phase 2 test programs. First, link with `-Wl,--no-relax`:
+otherwise the linker relaxes lui/addi pairs into single instructions, which
+shifts every later address and breaks hand-written expected values keyed to the
+assembly source. Second, memory init hex comes from `objcopy -O binary` piped
+through `tools/hex_gen.py` (one little-endian 32-bit word per line, `@00000000`
+header). objcopy's `-O verilog` output happens to have correct byte order on
+this binutils build, but its packing and byte-addressed `@` directives make it
+fragile; the script is version-independent. `make tb-programs` regenerates the
+committed hex files in tb/programs/.
+
 ## Icarus SystemVerilog limits
 
 Icarus 14 handles the subset this project uses: `logic`, `always_ff`, `always_comb`,

@@ -4,10 +4,6 @@
 
 `timescale 1ns / 1ps
 
-// A macro, not a localparam: Icarus cannot pass a string localparam through a
-// parameter override, though string literals bind fine.
-`define DMEM_FIX_FILE "sim/build/dmem_tb_fixture.hex"
-
 module dmem_tb;
 
   localparam int DATA_WIDTH      = 32;
@@ -29,8 +25,9 @@ module dmem_tb;
   localparam logic [DATA_WIDTH-1:0] LANE_BASE = 32'hA1B2_C3D4;
   localparam logic [DATA_WIDTH-1:0] LANE_DATA = 32'h1122_3344;
 
-  // Fixture data, listed word 15 down to word 0 because the concatenation
-  // builds a packed vector: word i is FIX_DATA[i*DATA_WIDTH +: DATA_WIDTH].
+  // Expected contents of tb/fixtures/dmem_fixture.hex, listed word 15 down to
+  // word 0 because the concatenation builds a packed vector: word i is
+  // FIX_DATA[i*DATA_WIDTH +: DATA_WIDTH].
   localparam logic [FIX_WORDS*DATA_WIDTH-1:0] FIX_DATA = {
     32'h600D_F00D,  // 15 last initialized word
     32'h1122_3344,  // 14
@@ -69,14 +66,6 @@ module dmem_tb;
   int unsigned                checks;
   time                        mark;
 
-  // The fixture writer must come first: Icarus runs the initial blocks of
-  // child instances before the parent's, and dmem reads INIT_FILE at time 0.
-  dmem_fixture #(
-    .FILE_NAME(`DMEM_FIX_FILE),
-    .NUM_WORDS(FIX_WORDS),
-    .DATA     (FIX_DATA)
-  ) fixture ();
-
   dmem #(
     .ADDR_WIDTH(MAIN_ADDR_WIDTH),
     .DATA_WIDTH(DATA_WIDTH)
@@ -89,10 +78,11 @@ module dmem_tb;
     .rdata   (rdata)
   );
 
+  // Fixture path is relative to the repo root, where simulations are run.
   dmem #(
     .ADDR_WIDTH(INIT_ADDR_WIDTH),
     .DATA_WIDTH(DATA_WIDTH),
-    .INIT_FILE (`DMEM_FIX_FILE)
+    .INIT_FILE ("tb/fixtures/dmem_fixture.hex")
   ) dut_init (
     .clk     (clk),
     .addr    (init_addr),
@@ -277,33 +267,6 @@ module dmem_tb;
 
     $display("PASS: dmem");
     $finish;
-  end
-
-endmodule
-
-// dmem_fixture: writes the hex fixture that the preloaded dmem instance reads.
-// It is a child instance rather than an initial block in dmem_tb because
-// Icarus runs instance initial blocks before the parent module's.
-module dmem_fixture #(
-  parameter string FILE_NAME = "",
-  parameter int    NUM_WORDS = 1,
-  parameter logic [NUM_WORDS*32-1:0] DATA = '0
-);
-
-  int fd;
-
-  initial begin
-    fd = $fopen(FILE_NAME, "w");
-    if (fd == 0) begin
-      $display("FAIL: could not open %s for writing", FILE_NAME);
-      $fatal(1);
-    end
-    // an explicit start address keeps $readmemh quiet about partial loads
-    $fdisplay(fd, "@%08h", 0);
-    for (int i = 0; i < NUM_WORDS; i++) begin
-      $fdisplay(fd, "%08h", DATA[i*32+:32]);
-    end
-    $fclose(fd);
   end
 
 endmodule

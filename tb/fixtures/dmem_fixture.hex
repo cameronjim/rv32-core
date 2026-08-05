@@ -1,0 +1,18 @@
+// dmem test fixture: 16 data words loaded by dmem_tb
+@00000000
+deadbeef
+00000001
+12345678
+ffffffff
+0000600d
+a5a5a5a5
+5a5a5a5a
+00000000
+80000000
+7fffffff
+01020304
+cafef00d
+0badc0de
+feedface
+11223344
+600df00d
