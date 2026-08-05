@@ -127,7 +127,7 @@ Unknown opcodes decode to all zeros (a nop that writes nothing).
 | ------ | ----------- | --------------- | ------------------------------ |
 | imem   | 0x0000_0000 | 4 KB, 1024 words| reset vector is 0x0000_0000    |
 | dmem   | 0x0000_1000 | 4 KB, 1024 words| read/write data                |
-| mmio   | 0xFFFF_0000 | tbd             | LEDs, 7-segs, switches (phase 4)|
+| mmio   | 0xFFFF_0000 | 64 KB window    | peripheral registers, map below|
 
 Address decode lives outside cpu_top: the core emits full 32-bit byte
 addresses, and the instantiating level (testbench now, board top later) maps
@@ -223,10 +223,34 @@ files (regenerated with the cross toolchain via a make target, committed so
 - mem: sw/lw, sb/lb/lbu, sh/lh/lhu across byte lanes, sign extension cases
 - branch: each branch taken and not taken, jal/jalr call and return, lui/auipc
 
+## MMIO register map
+
+The mmio region is selected when addr[31:16] == 16'hFFFF. Word access only.
+Loads from unmapped mmio addresses return 0; stores to them are ignored. The
+map is fixed here in phase 3 so programs and the simulation model agree; the
+synthesizable mmio block in phase 4 implements the same map.
+
+| address     | name  | access | meaning                                        |
+| ----------- | ----- | ------ | ---------------------------------------------- |
+| 0xFFFF_0000 | LEDR  | R/W    | bits 9:0 drive the red LEDs, readable for RMW  |
+| 0xFFFF_0004 | SW    | R      | bits 9:0, current slide switch positions       |
+| 0xFFFF_0008 | KEY   | R      | bits 3:0, pushbuttons, 1 means pressed (the hardware normalizes the board's active-low pins) |
+| 0xFFFF_0010 | HEX0  | R/W    | bits 6:0, segments a..g active high (hardware inverts for the board's active-low displays) |
+| 0xFFFF_0014 | HEX1  | R/W    | same layout                                    |
+| 0xFFFF_0018 | HEX2  | R/W    | same layout                                    |
+| 0xFFFF_001C | HEX3  | R/W    | same layout                                    |
+| 0xFFFF_0020 | HEX4  | R/W    | same layout                                    |
+| 0xFFFF_0024 | HEX5  | R/W    | same layout                                    |
+| 0xFFFF_0030 | CYCLE | R      | free-running 32 bit cycle counter, 0 at reset  |
+
+Software conventions (linker layout, crt0, build flow, sim vs hardware
+builds) live in claude-docs/software.md.
+
 ## Deferred to later phases
 
-- Linker script, C runtime, demo programs, programs/ Makefile (phase 3)
-- Memory-mapped I/O decode, board top, pin assignments (phase 4)
+- Synthesizable mmio block, board top, pin assignments, Quartus project (phase 4)
+- Reaction timer demo needs buttons on real hardware to be interesting; a
+  simulation-only version ships in phase 3 (phase 4 wires it to the board)
 - Pipeline registers, hazards, forwarding (phase 5)
 
 ## Testing strategy
