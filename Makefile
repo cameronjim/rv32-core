@@ -1,6 +1,15 @@
 # Icarus Verilog simulation driver for the rv32-core testbenches.
 # Recipes run under cmd.exe on Windows, so keep them to plain tool invocations.
 
+# The xPack windows-build-tools bin directory ships a busybox sh.exe. When that
+# directory is on PATH, make finds it and adopts it as SHELL, and the cmd.exe
+# style recipes below stop parsing. Pin the shell so the build behaves the same
+# whether or not those tools are on PATH.
+ifeq ($(OS),Windows_NT)
+SHELL       := cmd.exe
+.SHELLFLAGS := /C
+endif
+
 IVERILOG ?= C:/iverilog/bin/iverilog.exe
 VVP      ?= C:/iverilog/bin/vvp.exe
 
@@ -10,6 +19,10 @@ BUILD_WIN := $(subst /,\,$(BUILD_DIR))
 # rv32_pkg must be compiled before the modules that import it
 PKG      := rtl/rv32_pkg.sv
 RTL_SRCS := $(PKG) $(filter-out $(PKG),$(wildcard rtl/*.sv))
+
+# behavioral simulation-only models shared by the testbenches, for example the
+# mmio peripheral model demo_tb needs
+TB_LIB_SRCS := $(wildcard tb/lib/*.sv)
 
 # every tb/<name>_tb.sv becomes a <name>_tb target
 TB_SRCS    := $(wildcard tb/*_tb.sv)
@@ -27,9 +40,9 @@ test: $(TB_TARGETS)
 endif
 
 # build and run one testbench, for example: make alu_tb
-%_tb: tb/%_tb.sv $(RTL_SRCS)
+%_tb: tb/%_tb.sv $(RTL_SRCS) $(TB_LIB_SRCS)
 	@if not exist "$(BUILD_WIN)" mkdir "$(BUILD_WIN)"
-	$(IVERILOG) -g2012 -o $(BUILD_DIR)/$@.vvp $(RTL_SRCS) $<
+	$(IVERILOG) -g2012 -o $(BUILD_DIR)/$@.vvp $(RTL_SRCS) $(TB_LIB_SRCS) $<
 	$(VVP) $(BUILD_DIR)/$@.vvp
 
 clean:
@@ -57,3 +70,8 @@ $(PROG_DIR)/%.hex: $(PROG_DIR)/%.s tools/hex_gen.py
 	$(RISCV_PREFIX)gcc -march=rv32i -mabi=ilp32 -nostdlib -Wl,--no-relax -Ttext=0x0 -o $(BUILD_DIR)/$*.elf $<
 	$(RISCV_PREFIX)objcopy -O binary $(BUILD_DIR)/$*.elf $(BUILD_DIR)/$*.bin
 	$(PYTHON) tools/hex_gen.py $(BUILD_DIR)/$*.bin $@
+
+# Demo program hex files. programs/hex is committed too; see programs/Makefile.
+.PHONY: programs-sim
+programs-sim:
+	$(MAKE) -C programs sim
