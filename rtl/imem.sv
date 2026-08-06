@@ -3,8 +3,11 @@
 // preloaded into block RAM at synthesis time.
 
 module imem #(
-  parameter int    ADDR_WIDTH = 10,
-  parameter string INIT_FILE  = ""
+  parameter int ADDR_WIDTH = 10,
+  // INIT_FILE is deliberately untyped: Icarus cannot bind a parameter
+  // reference to a string-typed parameter port, which a board top needs to do
+  // when it forwards its own program-selection parameter down to here.
+  parameter     INIT_FILE  = ""
 ) (
   input  logic [ADDR_WIDTH-1:0] addr,
   // RV32I instructions are fixed at 32 bits, so this width is not a parameter

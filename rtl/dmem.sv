@@ -3,9 +3,12 @@
 // lane; reads return the whole word and leave lane extraction to the lsu.
 
 module dmem #(
-  parameter int    ADDR_WIDTH = 10,
-  parameter int    DATA_WIDTH = 32,
-  parameter string INIT_FILE  = ""
+  parameter int ADDR_WIDTH = 10,
+  parameter int DATA_WIDTH = 32,
+  // INIT_FILE is deliberately untyped: Icarus cannot bind a parameter
+  // reference to a string-typed parameter port, which a board top needs to do
+  // when it forwards its own program-selection parameter down to here.
+  parameter     INIT_FILE  = ""
 ) (
   input  logic                    clk,
   input  logic [ADDR_WIDTH-1:0]   addr,
