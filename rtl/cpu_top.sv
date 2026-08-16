@@ -1,6 +1,8 @@
 // cpu_top: the single-cycle RV32I core. Wires the decoder, register file,
 // immediate generator, branch comparator, ALU and load-store unit around a PC
-// register. Memories live outside so the same core fits the tb and a board top.
+// register. Every instruction takes one cycle except loads, which take two
+// because dmem reads are synchronous (see the load stall below). Memories live
+// outside so the same core fits the tb and a board top.
 
 module cpu_top
   import rv32_pkg::*;
@@ -59,6 +61,11 @@ module cpu_top
   logic [DATA_WIDTH-1:0] wb_data;
   logic                  branch_taken;
 
+  // load stall state: 0 during the first cycle of a load, 1 during the second
+  logic                  load_wait;
+  logic                  load_stall;
+  logic                  reg_write_en;
+
   assign instr = imem_rdata;
 
   // field slicing, hoisted out of the procedural blocks so Icarus does not
@@ -79,10 +86,28 @@ module cpu_top
   // jalr clears bit 0 of the computed target per the ISA
   assign jalr_target = {alu_result[DATA_WIDTH-1:1], 1'b0};
 
+  // Load stall. dmem registers its read address, so the data for a load only
+  // shows up in the cycle after the address is presented. load_stall marks the
+  // first cycle of a load: the PC holds so the same instruction is fetched
+  // again, and the writeback is suppressed because dmem_rdata is still the
+  // previous word. load_wait marks the second cycle, where the captured data
+  // is valid, the register file writes, and the PC moves on. Only mem_read
+  // instructions stall, so stores, branches and jumps are unaffected.
+  assign load_stall   = mem_read && !load_wait;
+  assign reg_write_en = reg_write && !load_stall;
+
+  always_ff @(posedge clk) begin
+    if (!rst_n) begin
+      load_wait <= 1'b0;
+    end else begin
+      load_wait <= load_stall;
+    end
+  end
+
   always_ff @(posedge clk) begin
     if (!rst_n) begin
       pc <= RESET_VECTOR;
-    end else begin
+    end else if (!load_stall) begin
       pc <= pc_next;
     end
   end
@@ -140,7 +165,7 @@ module cpu_top
     .rs2_data (rs2_data),
     .rd_addr  (rd_addr),
     .rd_data  (wb_data),
-    .rd_we    (reg_write)
+    .rd_we    (reg_write_en)
   );
 
   imm_gen #(

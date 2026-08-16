@@ -1,6 +1,7 @@
 // dmem_tb: self-checking testbench for the data memory.
 // Covers full word and per-lane writes, write gating, overlapping writes to
-// one word, asynchronous reads, address independence, and INIT_FILE preload.
+// one word, the synchronous read protocol, read during write to one address,
+// address independence, and INIT_FILE preload.
 
 `timescale 1ns / 1ps
 
@@ -20,6 +21,7 @@ module dmem_tb;
   localparam int LANE_ADDR  = 8;
   localparam int HALF_ADDR  = 9;
   localparam int ACCUM_ADDR = 12;
+  localparam int RDW_ADDR   = 20;
   localparam int VIRGIN_ADDR = 100;
 
   localparam logic [DATA_WIDTH-1:0] LANE_BASE = 32'hA1B2_C3D4;
@@ -62,9 +64,9 @@ module dmem_tb;
   logic [DATA_WIDTH-1:0]      init_rdata;
 
   logic [DATA_WIDTH-1:0]      expected;
+  logic [DATA_WIDTH-1:0]      held;
   logic [NUM_LANES-1:0]       lane_en;
   int unsigned                checks;
-  time                        mark;
 
   dmem #(
     .ADDR_WIDTH(MAIN_ADDR_WIDTH),
@@ -122,9 +124,12 @@ module dmem_tb;
     drive(idx, data, lanes, 1'b1);
   endtask
 
+  // Synchronous read protocol: present the address, let one rising edge capture
+  // it, then sample rdata a delta later.
   task automatic check_word(input int idx, input logic [DATA_WIDTH-1:0] want,
                             input string label);
     addr = idx[MAIN_ADDR_WIDTH-1:0];
+    @(posedge clk);
     #1;
     checks = checks + 1;
     if (rdata !== want) begin
@@ -149,6 +154,7 @@ module dmem_tb;
   task automatic check_init(input int idx, input logic [DATA_WIDTH-1:0] want,
                             input string label);
     init_addr = idx[INIT_ADDR_WIDTH-1:0];
+    @(posedge clk);
     #1;
     checks = checks + 1;
     if (init_rdata !== want) begin
@@ -223,26 +229,46 @@ module dmem_tb;
     write_word(ACCUM_ADDR, 32'h0000_1100, 4'b0010);
     check_word(ACCUM_ADDR, 32'hCCDD_11AA, "overwriting one lane disturbed the others");
 
-    // 9. Reads are asynchronous: two addresses resolve in one time step with
-    //    no clock edge in between
-    mark = $time;
-    addr = WORD_ADDR[MAIN_ADDR_WIDTH-1:0];
-    #0;
-    if (rdata !== 32'hDEAD_BEEF) begin
-      $display("FAIL: async read of word %0d gave 0x%08h at time %0t", WORD_ADDR, rdata, $time);
-      $fatal(1);
-    end
+    // 9. Reads are synchronous: a new address does not reach rdata until the
+    //    next rising edge captures it, and it does reach rdata on that edge
+    check_word(WORD_ADDR, 32'hDEAD_BEEF, "synchronous read setup");
+    held = rdata;
     addr = OTHER_ADDR[MAIN_ADDR_WIDTH-1:0];
-    #0;
+    // walk to just before the next rising edge without crossing it
+    #(CLK_PERIOD - 2);
+    if (rdata !== held) begin
+      $display("FAIL: rdata moved to 0x%08h before the capturing edge at time %0t", rdata, $time);
+      $fatal(1);
+    end
+    checks = checks + 1;
+    @(posedge clk);
+    #1;
     if (rdata !== 32'h1234_5678) begin
-      $display("FAIL: async read of word %0d gave 0x%08h at time %0t", OTHER_ADDR, rdata, $time);
+      $display("FAIL: registered read of word %0d gave 0x%08h at time %0t", OTHER_ADDR, rdata,
+               $time);
       $fatal(1);
     end
-    if ($time != mark) begin
-      $display("FAIL: asynchronous reads consumed simulation time, %0t to %0t", mark, $time);
+    checks = checks + 1;
+
+    // 9b. Read during write to one address on one edge returns the OLD word.
+    //     This is the M10K read-during-write behavior; the core never depends
+    //     on new data here because the load stall separates the two by a cycle.
+    write_word(RDW_ADDR, 32'h1111_2222, 4'b1111);
+    addr    = RDW_ADDR[MAIN_ADDR_WIDTH-1:0];
+    wdata   = 32'h3333_4444;
+    byte_en = 4'b1111;
+    we      = 1'b1;
+    @(posedge clk);
+    #1;
+    we      = 1'b0;
+    byte_en = '0;
+    checks  = checks + 1;
+    if (rdata !== 32'h1111_2222) begin
+      $display("FAIL: read during write returned 0x%08h, expected the old word 0x11112222",
+               rdata);
       $fatal(1);
     end
-    checks = checks + 2;
+    check_word(RDW_ADDR, 32'h3333_4444, "read during write lost the write itself");
 
     // 10. The preloaded instance holds the fixture
     for (int i = 0; i < FIX_WORDS; i++) begin
