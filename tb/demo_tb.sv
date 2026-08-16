@@ -78,6 +78,7 @@ module demo_tb;
     .ADDR_WIDTH (MEM_ADDR_WIDTH),
     .INIT_FILE  ("")
   ) u_imem (
+    .clk   (clk),
     .addr  (imem_addr[MEM_ADDR_WIDTH+1:2]),
     .rdata (imem_rdata)
   );

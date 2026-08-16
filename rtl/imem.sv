@@ -1,6 +1,7 @@
-// imem: instruction memory, word addressed with an asynchronous read port.
-// Read only. Contents come from an optional hex file so a program can be
-// preloaded into block RAM at synthesis time.
+// imem: instruction memory, word addressed, read only. The read port is
+// registered on the negative clock edge so Quartus infers M10K block RAM.
+// Contents come from an optional hex file so a program can be preloaded into
+// block RAM at synthesis time.
 
 module imem #(
   parameter int ADDR_WIDTH = 10,
@@ -9,6 +10,7 @@ module imem #(
   // when it forwards its own program-selection parameter down to here.
   parameter     INIT_FILE  = ""
 ) (
+  input  logic                  clk,
   input  logic [ADDR_WIDTH-1:0] addr,
   // RV32I instructions are fixed at 32 bits, so this width is not a parameter
   output logic [31:0]           rdata
@@ -27,6 +29,15 @@ module imem #(
     end
   end
 
-  assign rdata = mem[addr];
+  // Negative edge read. The core launches the address at the rising edge, the
+  // memory captures it half a period later at the falling edge, and rdata is
+  // stable well before the next rising edge, so a fetch still costs one full
+  // cycle. This exact shape, a single always_ff with no reset and no write
+  // bypass, is the pattern Quartus recognizes as M10K block RAM; an
+  // asynchronous read instead synthesized to a wall of registers and a giant
+  // read mux (33904 registers, 0 block memory bits at first synthesis).
+  always_ff @(negedge clk) begin
+    rdata <= mem[addr];
+  end
 
 endmodule
