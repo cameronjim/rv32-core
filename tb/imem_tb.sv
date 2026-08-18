@@ -1,6 +1,6 @@
 // imem_tb: self-checking testbench for the instruction memory.
 // Covers the INIT_FILE preload path at two different ADDR_WIDTH values, the
-// empty INIT_FILE guard, and the negative edge registered read across the
+// empty INIT_FILE guard, and the positive edge registered read across the
 // address range.
 
 `timescale 1ns / 1ps
@@ -91,12 +91,13 @@ module imem_tb;
     $fatal(1);
   end
 
-  // The read port is registered on the falling edge, so every check drives the
-  // address, waits for that edge, and samples one nanosecond later.
+  // The read port is registered on the rising edge, the same edge the core's
+  // pc register launches the address on, so every check drives the address,
+  // waits for that edge, and samples one nanosecond later.
   task automatic check_main(input int idx, input logic [INSTR_WIDTH-1:0] expected,
                             input string label);
     main_addr = idx[MAIN_ADDR_WIDTH-1:0];
-    @(negedge clk);
+    @(posedge clk);
     #1;
     checks = checks + 1;
     if (main_rdata !== expected) begin
@@ -109,7 +110,7 @@ module imem_tb;
   task automatic check_alt(input int idx, input logic [INSTR_WIDTH-1:0] expected,
                            input string label);
     alt_addr = idx[ALT_ADDR_WIDTH-1:0];
-    @(negedge clk);
+    @(posedge clk);
     #1;
     checks = checks + 1;
     if (alt_rdata !== expected) begin
@@ -122,7 +123,7 @@ module imem_tb;
   task automatic check_bare(input int idx, input logic [INSTR_WIDTH-1:0] expected,
                             input string label);
     bare_addr = idx[BARE_ADDR_WIDTH-1:0];
-    @(negedge clk);
+    @(posedge clk);
     #1;
     checks = checks + 1;
     if (bare_rdata !== expected) begin
@@ -158,7 +159,7 @@ module imem_tb;
     check_main((1 << MAIN_ADDR_WIDTH) - 1, 'x, "top word of the array was written");
 
     // 4. The read is registered, not asynchronous: a new address does not
-    //    disturb rdata until the next falling edge, then it appears
+    //    disturb rdata until the next rising edge, then it appears
     check_main(3, 32'h4020_8233, "word 3 wrong before the hold check");
     held      = main_rdata;
     main_addr = 10'd9;
@@ -169,15 +170,15 @@ module imem_tb;
                main_rdata, $time);
       $fatal(1);
     end
-    // still ahead of the falling edge, so the old word must still be there
+    // still ahead of the rising edge, so the old word must still be there
     #(CLK_PERIOD / 4);
     checks = checks + 1;
     if (main_rdata !== held) begin
-      $display("FAIL: rdata changed before the falling edge, got 0x%08h at time %0t", main_rdata,
+      $display("FAIL: rdata changed before the rising edge, got 0x%08h at time %0t", main_rdata,
                $time);
       $fatal(1);
     end
-    @(negedge clk);
+    @(posedge clk);
     #1;
     checks = checks + 1;
     if (main_rdata !== 32'h4020_D533) begin
@@ -190,7 +191,7 @@ module imem_tb;
 
     // 6. Holding one address across several edges keeps rdata stable
     repeat (3) begin
-      @(negedge clk);
+      @(posedge clk);
       #1;
       checks = checks + 1;
       if (main_rdata !== 32'h4020_8233) begin

@@ -17,7 +17,12 @@ module control
   output logic       mem_write,
   output logic       branch,
   output logic       jump,
-  output logic       jalr
+  output logic       jalr,
+  // which register fields this instruction actually reads. The pipeline's
+  // hazard unit qualifies its load-use match with these, so an instruction
+  // that never reads rs1 or rs2 cannot stall on a stale field.
+  output logic       uses_rs1,
+  output logic       uses_rs2
 );
 
   // ALU op decoded from funct3 for R-type and I-arith. is_reg gates sub, since
@@ -55,17 +60,22 @@ module control
     branch    = 1'b0;
     jump      = 1'b0;
     jalr      = 1'b0;
+    uses_rs1  = 1'b0;
+    uses_rs2  = 1'b0;
 
     case (opcode)
       OP_REG: begin
         reg_write = 1'b1;
         alu_op    = funct3_alu_op(funct3, funct7_b5, 1'b1);
+        uses_rs1  = 1'b1;
+        uses_rs2  = 1'b1;
       end
 
       OP_IMM: begin
         reg_write = 1'b1;
         alu_b_src = 1'b1;
         alu_op    = funct3_alu_op(funct3, funct7_b5, 1'b0);
+        uses_rs1  = 1'b1;
       end
 
       OP_LOAD: begin
@@ -73,17 +83,25 @@ module control
         alu_b_src = 1'b1;
         wb_sel    = WB_MEM;
         mem_read  = 1'b1;
+        uses_rs1  = 1'b1;
       end
 
+      // the store address is rs1 + imm and the stored word is rs2, so a store
+      // reads both fields even though its alu_b is the immediate
       OP_STORE: begin
         alu_b_src = 1'b1;
         mem_write = 1'b1;
+        uses_rs1  = 1'b1;
+        uses_rs2  = 1'b1;
       end
 
       OP_BRANCH: begin
-        branch = 1'b1;
+        branch   = 1'b1;
+        uses_rs1 = 1'b1;
+        uses_rs2 = 1'b1;
       end
 
+      // jal links pc+4 and targets pc+imm, so it reads no register
       OP_JAL: begin
         reg_write = 1'b1;
         wb_sel    = WB_PC4;
@@ -95,6 +113,7 @@ module control
         alu_b_src = 1'b1;
         wb_sel    = WB_PC4;
         jalr      = 1'b1;
+        uses_rs1  = 1'b1;
       end
 
       OP_LUI: begin

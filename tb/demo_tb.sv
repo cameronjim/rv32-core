@@ -252,15 +252,19 @@ module demo_tb;
   endtask
 
   // led_blink: one lit bit walks up to LEDR[9] and back down, one write per
-  // delay step, 18 writes per full bounce, measured near 103 cycles apart
+  // delay step, 18 writes per full bounce, measured near 201 cycles apart on
+  // the pipeline (103 on the load-stall single-cycle core). delay_loop is two
+  // instructions plus a taken branch per iteration, and a taken branch now
+  // costs a two cycle flush, so every delay in this file roughly doubled.
+  // The budget grew with it: 20 writes at 201 cycles needs about 3850.
   task automatic check_led_blink();
     int phase;
     int pos;
 
     start_demo("led_blink");
-    while ((ledr_n < 20) && (cyc < 3000)) step_cycles(1);
+    while ((ledr_n < 20) && (cyc < 5000)) step_cycles(1);
     if (ledr_n < 20)
-      fail("LEDR writes in 3000 cycles", $sformatf("%0d", ledr_n), "20");
+      fail("LEDR writes in 5000 cycles", $sformatf("%0d", ledr_n), "20");
 
     for (int i = 0; i < 20; i++) begin
       phase = i % 18;
@@ -270,12 +274,14 @@ module demo_tb;
     expect_range("first LEDR write cycle", ledr_cyc[0], 5, 60);
     for (int i = 1; i < 20; i++)
       expect_range($sformatf("LEDR write %0d spacing", i),
-                   ledr_cyc[i] - ledr_cyc[i-1], 78, 130);
+                   ledr_cyc[i] - ledr_cyc[i-1], 180, 230);
   endtask
 
   // counter: HEX4 and HEX5 go dark once, then a four write burst per count
-  // with the BCD digits carried by hand, measured 82 cycles apart (73 before
-  // the load stall; the delay loop reloads its counter from memory)
+  // with the BCD digits carried by hand, measured 128 cycles apart on the
+  // pipeline (73 single-cycle, 82 once the load stall landed). The delay loop
+  // reloads its counter from memory, so this one pays taken branch flushes and
+  // load-use stalls both.
   task automatic check_counter();
     logic [6:0] exp0[11];
 
@@ -284,9 +290,9 @@ module demo_tb;
 
     start_demo("counter");
     // HEX3 is written last in each burst, so 11 of those means 11 full counts
-    while ((hex_count(3) < 11) && (cyc < 1500)) step_cycles(1);
+    while ((hex_count(3) < 11) && (cyc < 2500)) step_cycles(1);
     if (hex_count(3) < 11)
-      fail("count bursts in 1500 cycles", $sformatf("%0d", hex_count(3)), "11");
+      fail("count bursts in 2500 cycles", $sformatf("%0d", hex_count(3)), "11");
 
     expect_range("HEX4 write count", hex_count(4), 1, 1);
     expect_range("HEX5 write count", hex_count(5), 1, 1);
@@ -303,12 +309,13 @@ module demo_tb;
 
     for (int i = 1; i < 11; i++)
       expect_range($sformatf("HEX0 update %0d spacing", i),
-                   hex_cyc[hex_at(0, i)] - hex_cyc[hex_at(0, i-1)], 50, 120);
+                   hex_cyc[hex_at(0, i)] - hex_cyc[hex_at(0, i-1)], 100, 160);
     expect_hex("LEDR untouched", mmio_ledr, 10'h000);
   endtask
 
   // switch_mirror: SW lands on LEDR and its three hex digits on HEX0..HEX2,
-  // refreshed roughly every 38 cycles (34 before the load stall)
+  // refreshed roughly every 51 cycles on the pipeline (34 single-cycle, 38
+  // with the load stall). The 600 cycle budget still has room to spare.
   task automatic check_switch_mirror();
     int deadline;
 
@@ -335,7 +342,9 @@ module demo_tb;
   endtask
 
   // fibonacci: terms 0,1,1,2,3,5,8,13.. spread over HEX0..HEX5, with LEDR
-  // pulsing 0x001 then 0x000 at every restart of the sequence
+  // pulsing 0x001 then 0x000 at every restart of the sequence. The sequence
+  // now takes 3903 cycles instead of about 2700, again from the delay loop's
+  // taken branches, so two restarts still land inside the 6000 cycle run.
   task automatic check_fibonacci();
     logic [6:0] exp0[8];
     int         pulses;
@@ -368,26 +377,30 @@ module demo_tb;
     if (pulses < 2)
       fail("restart pulses in 6000 cycles", $sformatf("%0d", pulses), "2 or more");
     expect_range("first restart cycle", first_pulse, 5, 200);
-    expect_range("restart period", second_pulse - first_pulse, 2000, 3500);
+    expect_range("restart period", second_pulse - first_pulse, 3400, 4400);
   endtask
 
   // memtest: walking ones then an address pattern over the dmem window at
   // 0x1800, LEDR reporting each phase and then the pass code. The phase 2 and
-  // pass windows were re-measured after the load stall landed: this demo is
-  // load heavy, so phase 2 moved from cycle 1605 to 1861 and the pass code
-  // from 1680 to 1944. The windows below are centered on the new numbers.
+  // pass windows have been re-measured twice now. Load stall: phase 2 moved
+  // from cycle 1605 to 1861 and the pass code from 1680 to 1944. Pipeline:
+  // phase 2 is at 2426 and the pass code at 2523. Loads themselves got
+  // cheaper here, but this demo is a tight loop and every taken branch back to
+  // the top costs two cycles, which more than eats the gain. The windows below
+  // are centered on the new numbers and the run is 3000 cycles so the final
+  // "still passing" check happens after the pass code lands.
   task automatic check_memtest();
     start_demo("memtest");
-    while (cyc < 2500) step_cycles(1);
+    while (cyc < 3000) step_cycles(1);
 
     if (ledr_n != 3) fail("LEDR write count", $sformatf("%0d", ledr_n), "3");
     expect_hex("LEDR phase 1 code", ledr_val[0], 10'h001);
     expect_range("LEDR phase 1 cycle", ledr_cyc[0], 5, 60);
     expect_hex("LEDR phase 2 code", ledr_val[1], 10'h002);
-    expect_range("LEDR phase 2 cycle", ledr_cyc[1], 1500, 2200);
+    expect_range("LEDR phase 2 cycle", ledr_cyc[1], 2100, 2800);
     expect_hex("LEDR pass code", ledr_val[2], 10'h3FF);
-    expect_range("LEDR pass cycle", ledr_cyc[2], 1600, 2300);
-    expect_hex("LEDR still passing at 2500", mmio_ledr, 10'h3FF);
+    expect_range("LEDR pass cycle", ledr_cyc[2], 2200, 2900);
+    expect_hex("LEDR still passing at 3000", mmio_ledr, 10'h3FF);
 
     // MEMTEST_WORDS is 8 in the simulation build, shown as two hex digits
     expect_hex("HEX0 word count low", mmio_hex[0], 7'h7F);
@@ -400,7 +413,10 @@ module demo_tb;
   endtask
 
   // reaction: run once with no key press so the poll times out, then again
-  // pressing as soon as the go signal appears
+  // pressing as soon as the go signal appears. Measured on the pipeline: the
+  // go signal at cycle 160 and the poll timeout at 2974, both still inside the
+  // existing budgets. Only the elapsed-digit deadline needed room, since the
+  // six display writes are one taken-branch loop each.
   task automatic check_reaction();
     int base;
     int deadline;
@@ -426,7 +442,7 @@ module demo_tb;
     expect_hex("run 2 press result", mmio_ledr, 10'h3FF);
 
     // hold the key until the six elapsed digits have been written out
-    deadline = cyc + 400;
+    deadline = cyc + 800;
     while (((hex_n - base) < 6) && (cyc < deadline)) step_cycles(1);
     key_in = 4'h0;
     if ((hex_n - base) < 6)
