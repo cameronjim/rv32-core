@@ -19,7 +19,13 @@ module de1_soc_top #(
   output logic [6:0] HEX2,
   output logic [6:0] HEX3,
   output logic [6:0] HEX4,
-  output logic [6:0] HEX5
+  output logic [6:0] HEX5,
+  // The board header is a 36 bit bus named GPIO_0[35:0], and the qsf assigns
+  // pins one for one against that name, so the uart line has to be GPIO_0[0]
+  // and not a scalar port with an invented name. Only bit 0 is declared
+  // because only bit 0 is used; the other 35 header pins stay unassigned and
+  // the fitter leaves them tri-stated like every other unused pin.
+  output logic [0:0] GPIO_0
 );
 
   localparam int DATA_WIDTH     = 32;
@@ -66,6 +72,7 @@ module de1_soc_top #(
   logic [6:0]           mmio_hex3;
   logic [6:0]           mmio_hex4;
   logic [6:0]           mmio_hex5;
+  logic                 mmio_uart_tx;
 
   // The CPU domain is CLOCK_50 itself. The divide by two register that used to
   // sit here existed because the single-cycle core's Fmax was 29 MHz: imem
@@ -105,6 +112,15 @@ module de1_soc_top #(
   assign HEX3 = ~mmio_hex3;
   assign HEX4 = ~mmio_hex4;
   assign HEX5 = ~mmio_hex5;
+
+  // Serial transmit line, 115200 8N1, idling high. GPIO_0[0] is physical pin 1
+  // of the JP1 header, and the header's two GND pins are physical pins 12 and
+  // 30 (pin 11 is 5 V and pin 29 is 3.3 V). So a USB to TTL adapter hooks up
+  // as adapter RX to JP1 pin 1 and adapter GND to JP1 pin 12 or 30, with the
+  // adapter's own power pins left disconnected. The DE1-SoC's built in USB
+  // serial port belongs to the HPS and is not reachable from the fabric, which
+  // is why the header plus an adapter is the route here.
+  assign GPIO_0[0] = mmio_uart_tx;
 
   // word index part selects hoisted out of the port connections
   assign imem_word_addr = imem_addr[MEM_ADDR_WIDTH+1:2];
@@ -155,6 +171,7 @@ module de1_soc_top #(
     .rdata   (dmem_raw_rdata)
   );
 
+  // BAUD_DIV stays at its default 434, which is 115200 baud from CLOCK_50
   mmio #(
     .DATA_WIDTH (DATA_WIDTH)
   ) u_mmio (
@@ -173,7 +190,8 @@ module de1_soc_top #(
     .hex2_out (mmio_hex2),
     .hex3_out (mmio_hex3),
     .hex4_out (mmio_hex4),
-    .hex5_out (mmio_hex5)
+    .hex5_out (mmio_hex5),
+    .uart_tx_o (mmio_uart_tx)
   );
 
 endmodule

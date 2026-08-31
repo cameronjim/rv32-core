@@ -1,9 +1,11 @@
 // mmio: synthesizable memory mapped IO block holding LEDR, HEX0..HEX5 and the
 // free-running CYCLE counter, plus read-only views of SW and KEY. Board
 // agnostic: input synchronizers and pin polarity fixes live in the board top.
+// Also owns the uart_tx instance behind UART_DATA and UART_STATUS.
 
 module mmio #(
-  parameter int DATA_WIDTH = 32
+  parameter int DATA_WIDTH = 32,
+  parameter int BAUD_DIV   = 434
 ) (
   input  logic                  clk,
   input  logic                  rst_n,
@@ -23,7 +25,9 @@ module mmio #(
   output logic [6:0]            hex2_out,
   output logic [6:0]            hex3_out,
   output logic [6:0]            hex4_out,
-  output logic [6:0]            hex5_out
+  output logic [6:0]            hex5_out,
+  // serial transmit line, idles high; the board top routes it to a header pin
+  output logic                  uart_tx_o
 );
 
   localparam int OFF_WIDTH  = 16;
@@ -32,6 +36,7 @@ module mmio #(
   localparam int KEY_WIDTH  = 4;
   localparam int SEG_WIDTH  = 7;
   localparam int HEX_COUNT  = 6;
+  localparam int UART_WIDTH = 8;
 
   localparam logic [OFF_WIDTH-1:0] OFF_LEDR  = 16'h0000;
   localparam logic [OFF_WIDTH-1:0] OFF_SW    = 16'h0004;
@@ -43,6 +48,8 @@ module mmio #(
   localparam logic [OFF_WIDTH-1:0] OFF_HEX4  = 16'h0020;
   localparam logic [OFF_WIDTH-1:0] OFF_HEX5  = 16'h0024;
   localparam logic [OFF_WIDTH-1:0] OFF_CYCLE = 16'h0030;
+  localparam logic [OFF_WIDTH-1:0] OFF_UDATA = 16'h0040;
+  localparam logic [OFF_WIDTH-1:0] OFF_USTAT = 16'h0044;
 
   logic [LEDR_WIDTH-1:0] ledr_q;
   logic [SEG_WIDTH-1:0]  hex_q[HEX_COUNT];
@@ -65,6 +72,29 @@ module mmio #(
   assign hex3_out = hex_q[3];
   assign hex4_out = hex_q[4];
   assign hex5_out = hex_q[5];
+
+  // UART_DATA writes pulse start for one cycle. uart_tx ignores a start while
+  // it is busy, which is exactly the documented drop behavior, so no extra
+  // gating lives here. uart_tx raises busy combinationally on a start it takes,
+  // so UART_STATUS already reads 1 in the cycle of the write itself.
+  logic                  uart_start;
+  logic                  uart_busy;
+  logic [UART_WIDTH-1:0] wdata_uart;
+
+  assign uart_start = we && (off == OFF_UDATA);
+  assign wdata_uart = wdata[UART_WIDTH-1:0];
+
+  uart_tx #(
+    .DATA_WIDTH (UART_WIDTH),
+    .BAUD_DIV   (BAUD_DIV)
+  ) u_uart_tx (
+    .clk   (clk),
+    .rst_n (rst_n),
+    .data  (wdata_uart),
+    .start (uart_start),
+    .tx    (uart_tx_o),
+    .busy  (uart_busy)
+  );
 
   // hex_index is only meaningful while hex_hit is set
   logic [2:0] hex_index;
@@ -100,6 +130,9 @@ module mmio #(
         OFF_HEX4:  rdata = {{(DATA_WIDTH-SEG_WIDTH){1'b0}}, hex_q[4]};
         OFF_HEX5:  rdata = {{(DATA_WIDTH-SEG_WIDTH){1'b0}}, hex_q[5]};
         OFF_CYCLE: rdata = cycle_q;
+        // UART_DATA is write only and reads as zero
+        OFF_UDATA: rdata = '0;
+        OFF_USTAT: rdata = {{(DATA_WIDTH-1){1'b0}}, uart_busy};
         default:   rdata = '0;
       endcase
     end
@@ -121,7 +154,8 @@ module mmio #(
         end else if (hex_hit) begin
           hex_q[hex_index] <= wdata_seg;
         end
-        // SW, KEY, CYCLE and every unmapped offset ignore writes
+        // SW, KEY, CYCLE, UART_STATUS and every unmapped offset ignore writes.
+        // UART_DATA holds no state here; its write drives uart_start above.
       end
     end
   end

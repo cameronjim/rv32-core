@@ -41,6 +41,12 @@
 #define REACT_TIMEOUT     2000u  // CYCLE counts before giving up on KEY
 #define REACT_HOLD        128u   // CYCLE counts the result stays up
 
+// uart_hello: the line itself dominates here, not this delay. demo_tb drops
+// the transmitter's BAUD_DIV to 16, so one character is 160 cycles and a
+// sixteen character count line is 2560. 64 cycles between lines keeps the
+// pacing visible in a waveform without stretching the run.
+#define UART_DELAY 64u
+
 #else
 
 // CYCLE counts at 50 MHz, so 50000000 is exactly one second.
@@ -56,6 +62,10 @@
 #define REACT_DELAY_MASK  0x7FFFFFFu
 #define REACT_TIMEOUT     100000000u  // exactly 2.0 s before giving up on KEY
 #define REACT_HOLD        100000000u  // exactly 2.0 s of result on the displays
+
+// uart_hello: exactly 1.0 s between count lines. One line at 115200 baud is
+// about 1.4 ms, so the delay is what sets the pace on the board.
+#define UART_DELAY 50000000u
 
 #endif // SIMULATION
 

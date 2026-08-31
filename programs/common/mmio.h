@@ -32,6 +32,14 @@
 // free running 32 bit cycle counter, 0 at reset, read only
 #define CYCLE MMIO_REG(0x0030u)
 
+// uart transmitter, 115200 8N1 on the board. Write bits 7:0 of UART_DATA to
+// send one byte; the write is dropped while the transmitter is busy, so poll
+// UART_STATUS for a clear busy bit first. The helpers in uart.h do that.
+#define UART_DATA   MMIO_REG(0x0040u)
+#define UART_STATUS MMIO_REG(0x0044u)
+
+#define UART_BUSY_MASK 0x1u
+
 #define LEDR_MASK 0x3FFu
 #define SW_MASK   0x3FFu
 #define KEY_MASK  0xFu

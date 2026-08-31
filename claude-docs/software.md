@@ -58,11 +58,28 @@ on demand in programs/build/ (gitignored) for the phase 4 Quartus flow.
 | fibonacci     | computes the sequence, shows each value on the HEX displays, restarts on overflow |
 | memtest       | walking-ones and address-pattern test over a dmem window, LEDR shows 0x3FF pass or a failure code |
 | reaction      | waits a pseudo random delay (seeded from CYCLE), lights an LED, measures cycles until a KEY press, shows the count on HEX; gives up after exactly 2 s |
+| uart_hello    | prints a banner over the serial line once, then a "count <hex>" line every second, mirroring the count's low bits on LEDR |
 
 All demo timing (delays and deadlines alike) counts the CYCLE register, never
 loop iterations. Iteration-counted timing broke twice: the reaction timeout
 ran 6x long, and every delay ran 2x slow the day the pipeline changed what a
 loop iteration costs. Cycle counts are exact on any core at 50 MHz.
+
+## Serial output (programs/common/uart.h)
+
+uart.h sits on top of the UART_DATA and UART_STATUS registers in mmio.h and
+holds the text helpers: uart_putc (spins until UART_STATUS bit 0 clears, then
+writes the byte), uart_puts, uart_put_hex (eight lowercase hex digits, no
+prefix) and uart_put_dec (unsigned decimal by repeated subtraction against a
+power of ten table, because RV32I has no divide instruction). Everything is
+static inline, the same convention as the mmio.h helpers, and the header pulls
+in mmio.h but not config.h.
+
+On hardware the line is 115200 baud 8N1 on GPIO_0[0], which is physical pin 1
+of the JP1 expansion header; the header's GND pins are physical 12 and 30. A
+USB to TTL adapter watches it with RX on JP1 pin 1 and GND on JP1 pin 12.
+In simulation demo_tb overrides the mmio model's BAUD_DIV to 16 so whole
+frames fit in a demo length run, and decodes the line back into bytes.
 
 Each demo is a single C file in programs/ built by programs/Makefile
 (`make -C programs <name>` or `make -C programs all`). The simulation

@@ -26,3 +26,8 @@ set_false_path -to [get_ports {HEX2[*]}]
 set_false_path -to [get_ports {HEX3[*]}]
 set_false_path -to [get_ports {HEX4[*]}]
 set_false_path -to [get_ports {HEX5[*]}]
+
+# The uart transmit line is an asynchronous serial output: the receiver on the
+# other end of the header recovers its own bit timing from the start edge and
+# never samples against CLOCK_50, so this is not a real timing arc either.
+set_false_path -to [get_ports {GPIO_0[*]}]

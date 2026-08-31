@@ -1,6 +1,7 @@
-// demo_tb: self checking testbench for the six demo programs in programs/.
+// demo_tb: self checking testbench for the seven demo programs in programs/.
 // Wraps cpu_top with imem, dmem and the behavioral mmio model, drives switch
-// and key stimulus, and checks the observable mmio behavior of every demo.
+// and key stimulus, and checks the observable mmio behavior of every demo,
+// including decoding the serial line for the uart demo.
 
 `timescale 1ns / 1ps
 
@@ -23,6 +24,25 @@ module demo_tb;
 
   // more events than any single demo produces inside its budget
   localparam int MAX_EV = 1024;
+
+  // The transmitter model runs at a small baud divider here so whole 8N1
+  // frames fit inside a demo length run: 16 clocks per bit and 10 bits per
+  // frame means one character costs 160 cycles instead of the 4340 the
+  // hardware BAUD_DIV of 434 would cost. Only uart_hello cares.
+  localparam int UART_DIV = 16;
+
+  // room for far more received bytes than the uart demo sends in its budget
+  localparam int MAX_RX = 512;
+
+  // The banner uart_hello prints once at startup, and the count line prefix.
+  // Neither carries its line ending: \r is not a portable escape across
+  // simulators, so the two ending bytes are spelled out below and matched by
+  // value instead.
+  localparam string UART_BANNER = "rv32-core says hello over uart";
+  localparam string UART_COUNT  = "count ";
+
+  localparam logic [7:0] ASCII_CR = 8'h0D;
+  localparam logic [7:0] ASCII_LF = 8'h0A;
 
   logic clk;
   logic rst_n;
@@ -49,6 +69,15 @@ module demo_tb;
   logic                  mmio_wr_ledr;
   logic [5:0]            mmio_wr_hex;
   logic [DATA_WIDTH-1:0] mmio_wr_data;
+  // the serial line the receiver below decodes, plus the model's busy flag,
+  // which nothing checks here but which is worth having in the waveform
+  logic                  uart_line;
+  logic                  uart_busy;
+
+  // received byte log, filled by the serial receiver process further down
+  logic                  uart_capture;
+  logic [7:0]            uart_rx[MAX_RX];
+  int                    uart_rx_n;
 
   // address decode lives here, not in the core: dmem answers for 0x00001xxx
   // and the mmio model for 0xFFFFxxxx
@@ -97,7 +126,8 @@ module demo_tb;
   );
 
   mmio_sim #(
-    .DATA_WIDTH (DATA_WIDTH)
+    .DATA_WIDTH (DATA_WIDTH),
+    .BAUD_DIV   (UART_DIV)
   ) u_mmio (
     .clk     (clk),
     .rst_n   (rst_n),
@@ -116,6 +146,8 @@ module demo_tb;
     .hex4_q  (mmio_hex[4]),
     .hex5_q  (mmio_hex[5]),
     .cycle_q (mmio_cycle),
+    .uart_tx_o (uart_line),
+    .uart_busy (uart_busy),
     .wr_ledr (mmio_wr_ledr),
     .wr_hex  (mmio_wr_hex),
     .wr_data (mmio_wr_data)
@@ -146,10 +178,12 @@ module demo_tb;
   initial begin
     seg_table = '{7'h3F, 7'h06, 7'h5B, 7'h4F, 7'h66, 7'h6D, 7'h7D, 7'h07,
                   7'h7F, 7'h6F, 7'h77, 7'h7C, 7'h39, 7'h5E, 7'h79, 7'h71};
-    run_active = 1'b0;
-    cyc        = 0;
-    ledr_n     = 0;
-    hex_n      = 0;
+    run_active   = 1'b0;
+    cyc          = 0;
+    ledr_n       = 0;
+    hex_n        = 0;
+    uart_capture = 1'b0;
+    uart_rx_n    = 0;
   end
 
   always @(posedge clk) begin
@@ -184,6 +218,37 @@ module demo_tb;
       #2;
     end
   endtask
+
+  // Serial receiver, the same shape as the reference decoder in
+  // tb/uart_tx_tb.sv: it owns no knowledge of when the CPU wrote a byte, it
+  // hunts the falling start edge, waits half a bit period and then samples once
+  // per bit period. Bytes land in uart_rx while uart_capture is set.
+  task automatic uart_step();
+    @(posedge clk);
+    #1;
+  endtask
+
+  initial begin
+    logic [7:0] rx_byte;
+
+    forever begin
+      uart_step();
+      if (uart_capture && (uart_line === 1'b0)) begin
+        repeat (UART_DIV / 2) uart_step();
+        rx_byte = '0;
+        for (int i = 0; i < 8; i++) begin
+          repeat (UART_DIV) uart_step();
+          rx_byte[i] = uart_line;
+        end
+        repeat (UART_DIV) uart_step();
+        // a frame without a high stop bit is framing garbage, not a byte
+        if ((uart_line === 1'b1) && (uart_rx_n < MAX_RX)) begin
+          uart_rx[uart_rx_n] = rx_byte;
+          uart_rx_n          = uart_rx_n + 1;
+        end
+      end
+    end
+  end
 
   task automatic fail(input string what, input string got, input string exp);
     $display("FAIL: %s: %s: got %s expected %s", cur_demo, what, got, exp);
@@ -230,6 +295,74 @@ module demo_tb;
     return -1;
   endfunction
 
+  // does the received byte stream carry s starting at pos
+  function automatic logic rx_match(input int pos, input string s);
+    if (pos < 0) return 1'b0;
+    if ((pos + s.len()) > uart_rx_n) return 1'b0;
+    for (int i = 0; i < s.len(); i++)
+      if (uart_rx[pos+i] !== s[i]) return 1'b0;
+    return 1'b1;
+  endfunction
+
+  function automatic int rx_count(input string s);
+    int n;
+    n = 0;
+    for (int p = 0; p < uart_rx_n; p++) if (rx_match(p, s)) n = n + 1;
+    return n;
+  endfunction
+
+  // first position at or after from where s appears, -1 if it never does
+  function automatic int rx_find(input string s, input int from);
+    for (int p = from; p < uart_rx_n; p++) if (rx_match(p, s)) return p;
+    return -1;
+  endfunction
+
+  // is there a carriage return line feed pair at pos
+  function automatic logic rx_crlf_at(input int pos);
+    if ((pos < 0) || ((pos + 2) > uart_rx_n)) return 1'b0;
+    return (uart_rx[pos] === ASCII_CR) && (uart_rx[pos+1] === ASCII_LF);
+  endfunction
+
+  function automatic int rx_crlf_count();
+    int n;
+    n = 0;
+    for (int p = 0; p < uart_rx_n; p++) if (rx_crlf_at(p)) n = n + 1;
+    return n;
+  endfunction
+
+  // value of one lowercase hex digit byte, -1 when it is not one
+  function automatic int rx_nibble(input logic [7:0] c);
+    if ((c >= "0") && (c <= "9")) return c - "0";
+    if ((c >= "a") && (c <= "f")) return (c - "a") + 10;
+    return -1;
+  endfunction
+
+  // the eight hex digits at pos as a value, -1 if any of them is not a digit
+  function automatic int rx_hex8(input int pos);
+    int v;
+    int d;
+    v = 0;
+    if ((pos < 0) || ((pos + 8) > uart_rx_n)) return -1;
+    for (int i = 0; i < 8; i++) begin
+      d = rx_nibble(uart_rx[pos+i]);
+      if (d < 0) return -1;
+      v = (v << 4) | d;
+    end
+    return v;
+  endfunction
+
+  // the received bytes as printable text, control codes spelled out
+  function automatic string rx_text();
+    string s;
+    s = "";
+    for (int i = 0; i < uart_rx_n; i++) begin
+      if (uart_rx[i] == ASCII_CR) s = {s, "<cr>"};
+      else if (uart_rx[i] == ASCII_LF) s = {s, "<lf>"};
+      else s = {s, string'(uart_rx[i])};
+    end
+    return s;
+  endfunction
+
   // load one demo image, poison the rest of dmem, then release reset
   task automatic start_demo(input string name);
     cur_demo = name;
@@ -245,6 +378,7 @@ module demo_tb;
     cyc        = 0;
     ledr_n     = 0;
     hex_n      = 0;
+    uart_rx_n  = 0;
     step_cycles(2);
     rst_n      = 1'b1;
     run_active = 1'b1;
@@ -499,6 +633,67 @@ module demo_tb;
     $display("demo reaction: measured elapsed %0d cycles", elapsed);
   endtask
 
+  // uart_hello: the banner once, then "count <8 hex digits>" lines forever,
+  // with the count's low bits mirrored on LEDR so the board shows life without
+  // a serial adapter. Line time dominates the run: at the UART_DIV of 16 above
+  // a character is 160 cycles, so the 32 character banner is 5120 cycles and
+  // each 16 character count line is 2560. Banner plus three lines is 12800
+  // cycles of pure wire time before any program overhead; measured, the third
+  // count line finishes decoding at cycle 13266, so the 466 cycles on top of
+  // the wire time are the whole cost of the program plus three UART_DELAY
+  // waits of 64 cycles each. The 20000 cycle budget is 50 percent above the
+  // measurement.
+  task automatic check_uart_hello();
+    int p;
+    int val[3];
+
+    start_demo("uart_hello");
+    uart_capture = 1'b1;
+    // four line ends means the banner plus three count lines
+    while ((rx_crlf_count() < 4) && (cyc < 20000)) step_cycles(1);
+    uart_capture = 1'b0;
+    $display("demo uart_hello: %0d bytes by cycle %0d: %s", uart_rx_n, cyc,
+             rx_text());
+
+    if (rx_crlf_count() < 4)
+      fail("uart lines in 20000 cycles", $sformatf("%0d", rx_crlf_count()), "4");
+
+    // the banner arrives exactly once, and it arrives first
+    if (rx_count(UART_BANNER) != 1)
+      fail("banner occurrences", $sformatf("%0d", rx_count(UART_BANNER)), "1");
+    if (!rx_match(0, UART_BANNER))
+      fail("banner position", $sformatf("%0d", rx_find(UART_BANNER, 0)), "0");
+    if (!rx_crlf_at(UART_BANNER.len()))
+      fail("banner ending", "no crlf", "crlf");
+
+    // three count lines follow it, each carrying the next value
+    p = UART_BANNER.len() + 2;
+    for (int i = 0; i < 3; i++) begin
+      if (!rx_match(p, UART_COUNT))
+        fail($sformatf("count line %0d prefix", i),
+             $sformatf("byte %0d of the stream", p), UART_COUNT);
+      val[i] = rx_hex8(p + UART_COUNT.len());
+      if (val[i] < 0)
+        fail($sformatf("count line %0d value", i), "not eight hex digits",
+             "eight hex digits");
+      if (!rx_crlf_at(p + UART_COUNT.len() + 8))
+        fail($sformatf("count line %0d ending", i), "no crlf", "crlf");
+      p = p + UART_COUNT.len() + 10;
+    end
+    expect_hex("first count value", val[0], 32'd0);
+    expect_hex("second count value", val[1], val[0] + 1);
+    expect_hex("third count value", val[2], val[1] + 1);
+
+    // LEDR mirrors the same counts, written just before each line goes out
+    if (ledr_n < 3)
+      fail("LEDR writes", $sformatf("%0d", ledr_n), "3 or more");
+    // The LEDR write for the next count happens while the previous line is
+    // still going out, so only the writes are checked here, not what LEDR
+    // happens to hold at the moment the capture stops.
+    for (int i = 0; i < 3; i++)
+      expect_hex($sformatf("LEDR write %0d", i), ledr_val[i], i);
+  endtask
+
   initial begin
     $dumpfile("sim/build/demo_tb.vcd");
     $dumpvars(0, demo_tb);
@@ -513,6 +708,7 @@ module demo_tb;
     check_fibonacci();
     check_memtest();
     check_reaction();
+    check_uart_hello();
 
     $display("PASS: demo_tb");
     $finish;

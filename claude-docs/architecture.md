@@ -270,6 +270,8 @@ synthesizable mmio block in phase 4 implements the same map.
 | 0xFFFF_0020 | HEX4  | R/W    | same layout                                    |
 | 0xFFFF_0024 | HEX5  | R/W    | same layout                                    |
 | 0xFFFF_0030 | CYCLE | R      | free-running 32 bit cycle counter, 0 at reset  |
+| 0xFFFF_0040 | UART_DATA   | W | write bits 7:0 to transmit one byte; ignored while busy |
+| 0xFFFF_0044 | UART_STATUS | R | bit 0 = tx busy; poll for 0 before each write  |
 
 Software conventions (linker layout, crt0, build flow, sim vs hardware
 builds) live in claude-docs/software.md.
@@ -283,9 +285,10 @@ behavioral tb/lib/mmio_sim.sv is its reference model; both implement the same
 map and the mmio testbench cross-checks them against each other.
 
 Ports: clk, rst_n; bus side addr (32), wdata (32), we, re, rdata (32,
-combinational read like dmem so loads stay single cycle); peripheral side
-sw_in (10), key_in (4, already synchronized and normalized so 1 means
-pressed), ledr_out (10), hex0_out..hex5_out (7 each, active high).
+combinational read); peripheral side sw_in (10), key_in (4, already
+synchronized and normalized so 1 means pressed), ledr_out (10),
+hex0_out..hex5_out (7 each, active high), and since phase 5b uart_tx_o (the
+serial line) with parameter BAUD_DIV forwarded to the uart_tx instance.
 
 LEDR and HEX0..HEX5 are read/write registers, reset to 0. SW and KEY reads
 reflect the inputs. CYCLE is a free-running counter, 0 at reset. Unmapped
@@ -295,7 +298,8 @@ the block does not check addr[31:16] itself; it decodes addr[15:0] only.
 ### de1_soc_top (rtl/de1_soc_top.sv)
 
 The board top. Ports use the DE1-SoC pin names exactly as the qsf assigns
-them (CLOCK_50, KEY, SW, LEDR, HEX0..HEX5); this is the one sanctioned
+them (CLOCK_50, KEY, SW, LEDR, HEX0..HEX5, and since phase 5b GPIO_0[0]
+carrying the uart line to JP1 header pin 1); this is the one sanctioned
 exception to snake_case port naming, so the pin assignment file lines up with
 the board documentation.
 
@@ -423,9 +427,51 @@ MEM/WB, writeback, both lsu instances) lives in its own module,
 mem_wb_stage, to respect the 400 line rule; cpu_top keeps the front end.
 Interrupts, exceptions and CSRs remain out of scope.
 
+## UART transmitter (phase 5b)
+
+A hand-written serial transmitter so programs can print text to a PC
+terminal. 115200 baud, 8N1 (one start bit, eight data bits LSB first, one
+stop bit), no receiver in this phase.
+
+### uart_tx (rtl/uart_tx.sv)
+
+Parameters DATA_WIDTH (8) and BAUD_DIV (default 434: 50 MHz / 115200 =
+434.03, 0.007 percent error, well inside the 2 percent a UART tolerates).
+Ports: clk, rst_n, `data` (8), `start` (pulse, accepted only when idle),
+`tx` (the serial line, idles high), `busy`. FSM: idle, start bit, 8 data
+bits, stop bit, back to idle; a baud counter divides clk by BAUD_DIV per
+bit, a shift register serializes LSB first. `busy` covers the whole frame
+including the stop bit. A start pulse while busy is ignored.
+
+### mmio integration
+
+Two new registers per the map above. UART_DATA writes (bits 7:0) pulse
+uart_tx's start; while busy the write is dropped (software's contract is to
+poll UART_STATUS bit 0 first). UART_STATUS reads {31'b0, busy}, and busy
+already reads 1 in the very cycle a write is accepted (uart_tx computes it
+combinationally from the accepted start), so poll-then-write can never
+double-write. Both the
+synthesizable mmio block and the behavioral mmio_sim implement the same
+semantics; mmio_sim models timing with the same BAUD_DIV so the demo
+testbench can decode real frames. The mmio block exposes uart_tx's pins
+upward; de1_soc_top wires tx to a GPIO_0 header pin (assigned in the qsf
+from board documentation, 3.3 V) so a USB-to-TTL serial adapter can watch
+it. The DE1-SoC's own USB serial port is wired to the HPS side and is not
+reachable from the FPGA fabric, which is why a header pin plus adapter is
+the honest route until the phase 5c bridge exists.
+
+### Software
+
+programs/common gains uart helpers (uart_putc polls busy then writes,
+uart_puts, uart_put_hex) and a uart_hello demo that prints a banner and
+then a counting line forever. In simulation BAUD_DIV drops via parameter
+override so demo_tb can decode frames in reasonable sim time; the tb
+carries a serial decoder model that samples tx at the overridden baud rate
+and reconstructs bytes, asserting the exact banner text.
+
 ## Deferred to later phases
 
-- UART transmitter peripheral (phase 5b)
+- UART receiver (would enable a serial console, not just output)
 - HPS bridge integration (phase 5c)
 
 ## Testing strategy
