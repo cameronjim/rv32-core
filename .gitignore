@@ -37,3 +37,5 @@ c5_pin_model_dump.txt
 *.swp
 Thumbs.db
 .DS_Store
+.claude
+claude-docs/
